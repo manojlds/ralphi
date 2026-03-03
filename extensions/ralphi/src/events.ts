@@ -13,4 +13,8 @@ export function registerEvents(pi: ExtensionAPI, runtime: RalphiRuntime) {
 	pi.on("before_agent_start", (event, ctx) => {
 		return runtime.handleBeforeAgentStart(event, ctx);
 	});
+
+	pi.on("turn_end", async (_event, ctx) => {
+		await runtime.handleTurnEnd(ctx);
+	});
 }

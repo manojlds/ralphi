@@ -1,0 +1,28 @@
+# ralphi ralph configuration
+# Auto-generated — edit as needed
+
+project:
+  name: "ralphi"
+  language: "TypeScript"
+  framework: "Pi extension"
+
+commands:
+  test: "npm run test:unit:ralphi-extension"
+  lint: "npm run lint"
+  build: "npm run build"
+  typecheck: "npm run typecheck"
+
+rules:
+  - "use vitest for tests under extensions/ralphi/test/**/*.test.ts"
+  - "keep extension wiring in extensions/ralphi/src with registerCommands/registerEvents/registerTools"
+  - "use ESM-style TypeScript imports and preserve the existing tab-indented style"
+  - "prefer mock-based runtime tests using extensions/ralphi/test/factories/pi.ts"
+  - "run npm run check after every code change before finalizing"
+
+boundaries:
+  never_touch:
+    - "*.lock"
+    - ".env*"
+
+engine: "pi"
+max_retries: 3

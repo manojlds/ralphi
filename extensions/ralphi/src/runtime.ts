@@ -28,6 +28,8 @@ export class RalphiRuntime {
 	private readonly phaseRuns = new Map<string, PhaseRun>();
 	private readonly activePhaseBySession = new Map<string, string>();
 	private readonly loops = new Map<string, LoopRun>();
+	private readonly commandContextByRun = new Map<string, ExtensionCommandContext>();
+	private readonly pendingFinalizeRuns = new Set<string>();
 
 	constructor(private readonly pi: ExtensionAPI) {}
 
@@ -70,6 +72,20 @@ export class RalphiRuntime {
 		for (const run of this.phaseRuns.values()) {
 			if (run.status === "running") {
 				this.activePhaseBySession.set(run.sessionKey, run.id);
+			}
+		}
+	}
+
+	private pruneEphemeralState() {
+		for (const runId of this.commandContextByRun.keys()) {
+			if (!this.phaseRuns.has(runId)) {
+				this.commandContextByRun.delete(runId);
+			}
+		}
+		for (const runId of this.pendingFinalizeRuns) {
+			const run = this.phaseRuns.get(runId);
+			if (!run || run.status !== "awaiting_finalize") {
+				this.pendingFinalizeRuns.delete(runId);
 			}
 		}
 	}
@@ -142,6 +158,7 @@ export class RalphiRuntime {
 			}
 		}
 		this.rebuildIndexes();
+		this.pruneEphemeralState();
 		this.updateLoopStatusLine(ctx);
 	}
 
@@ -342,6 +359,7 @@ export class RalphiRuntime {
 		};
 
 		this.phaseRuns.set(runId, run);
+		this.commandContextByRun.set(runId, ctx);
 		this.activePhaseBySession.set(key, runId);
 
 		if (checkpointLeafId) {
@@ -376,11 +394,17 @@ Run contract for this phase:
 		const run = this.phaseRuns.get(runId);
 		if (!run) {
 			ctx.ui.notify(`Run not found: ${runId}`, "error");
+			this.pendingFinalizeRuns.delete(runId);
+			this.commandContextByRun.delete(runId);
 			return;
 		}
 
 		if (run.status !== "awaiting_finalize") {
 			ctx.ui.notify(`Run ${runId} is not ready to finalize (status: ${run.status}).`, "warning");
+			this.pendingFinalizeRuns.delete(runId);
+			if (run.status === "completed") {
+				this.commandContextByRun.delete(runId);
+			}
 			return;
 		}
 
@@ -388,6 +412,11 @@ Run contract for this phase:
 			await this.finalizeLoopRun(run, ctx);
 		} else {
 			await this.finalizeNonLoopRun(run, ctx);
+		}
+
+		if (this.phaseRuns.get(runId)?.status === "completed") {
+			this.pendingFinalizeRuns.delete(runId);
+			this.commandContextByRun.delete(runId);
 		}
 	}
 
@@ -468,6 +497,7 @@ Run contract for this phase:
 		};
 
 		this.phaseRuns.set(runId, run);
+		this.commandContextByRun.set(runId, ctx);
 		this.activePhaseBySession.set(key, runId);
 		this.persistState(ctx);
 
@@ -667,9 +697,43 @@ Loop run contract:
 			run.autoConfirm = true;
 		}
 
+		this.pendingFinalizeRuns.add(run.id);
 		this.persistState(ctx);
-		this.sendUserMessage(ctx, `/ralphi-finalize ${run.id}`, "steer");
-		return { ok: true, text: `Recorded completion for ${run.phase} (${run.id}). Finalize requested.` };
+		return { ok: true, text: `Recorded completion for ${run.phase} (${run.id}). Finalize queued for post-turn execution.` };
+	}
+
+	async handleTurnEnd(ctx: ExtensionContext) {
+		this.restoreStateFromSession(ctx);
+		if (this.pendingFinalizeRuns.size === 0) return;
+
+		for (const runId of [...this.pendingFinalizeRuns]) {
+			const run = this.phaseRuns.get(runId);
+			if (!run || run.status !== "awaiting_finalize") {
+				this.pendingFinalizeRuns.delete(runId);
+				continue;
+			}
+
+			const commandCtx = this.commandContextByRun.get(runId);
+			if (!commandCtx) {
+				if (ctx.hasUI) {
+					ctx.ui.setEditorText(`/ralphi-finalize ${runId}`);
+					ctx.ui.notify(
+						`Run ${runId} is awaiting finalize. Press Enter to run /ralphi-finalize ${runId}.`,
+						"warning",
+					);
+				}
+				this.pendingFinalizeRuns.delete(runId);
+				continue;
+			}
+
+			await this.finalizeRun(commandCtx, runId);
+			this.pendingFinalizeRuns.delete(runId);
+
+			if (this.phaseRuns.get(runId)?.status !== "completed" && ctx.hasUI) {
+				ctx.ui.setEditorText(`/ralphi-finalize ${runId}`);
+				ctx.ui.notify(`Auto-finalize did not complete for ${runId}. Press Enter to retry manually.`, "warning");
+			}
+		}
 	}
 
 	handleSessionStart(ctx: ExtensionContext) {

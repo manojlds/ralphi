@@ -48,4 +48,30 @@ describe("ralphi extension unit-test harness", () => {
 		await runtime.finalizeRun(ctx as any, runId);
 		expect(api.sendUserMessages[api.sendUserMessages.length - 1].text).toBe(`/ralphi-loop-next ${loopId}`);
 	});
+
+	it("auto-finalizes queued runs on turn_end instead of sending /ralphi-finalize as plain text", async () => {
+		const sessionManager = createMockSessionManager();
+		const api = createMockExtensionApi(sessionManager);
+		const runtime = new RalphiRuntime(api as any);
+		const ctx = createMockCommandContext({ sessionManager, cwd: "/tmp/ralphi-project" });
+
+		await runtime.startPhase(ctx as any, "ralphi-init", "");
+		const kickoff = api.sendUserMessages[0].text;
+		const runIdMatch = kickoff.match(/runId: "([^"]+)"/);
+		expect(runIdMatch).toBeTruthy();
+		const runId = runIdMatch![1];
+
+		const done = await runtime.markPhaseDone(ctx as any, {
+			runId,
+			phase: "ralphi-init",
+			summary: "init complete",
+			outputs: [".ralphi/config.yaml"],
+		});
+		expect(done.ok).toBe(true);
+		expect(done.text).toContain("Finalize queued");
+		expect(api.sendUserMessages.some((m) => m.text.startsWith("/ralphi-finalize"))).toBe(false);
+
+		await runtime.handleTurnEnd(ctx as any);
+		expect(ctx.navigateCalls.length).toBeGreaterThan(0);
+	});
 });

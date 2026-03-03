@@ -4,5 +4,6 @@ node_modules/
 # Ralph loop working files (local state)
 prd.json
 progress.txt
-.ralphi/
+.ralphi/*
+!.ralphi/config.yaml
 .last-branch

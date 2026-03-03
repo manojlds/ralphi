@@ -17,7 +17,11 @@
   "bugs": "https://github.com/manojlds/ralphi/issues",
   "scripts": {
     "test:unit:ralphi-extension": "vitest run --config vitest.config.ts",
-    "test:unit:ralphi-extension:watch": "vitest --config vitest.config.ts"
+    "test:unit:ralphi-extension:watch": "vitest --config vitest.config.ts",
+    "lint": "eslint . --ext .ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.json",
+    "check": "npm run lint && npm run typecheck && npm run test:unit:ralphi-extension"
   },
   "pi": {
     "extensions": [
@@ -36,6 +40,10 @@
     "@sinclair/typebox": "*"
   },
   "devDependencies": {
+    "@eslint/js": "^9.22.0",
+    "eslint": "^9.22.0",
+    "typescript": "^5.8.2",
+    "typescript-eslint": "^8.26.1",
     "vitest": "^3.2.4"
   }
 }
