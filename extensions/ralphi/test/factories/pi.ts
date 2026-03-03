@@ -12,9 +12,12 @@ export type MockUi = {
 	statuses: Array<{ key: string; text: string | undefined }>;
 	confirmCalls: Array<{ title: string; message: string }>;
 	confirmResponses: boolean[];
+	inputCalls: Array<{ title: string; placeholder?: string }>;
+	inputResponses: Array<string | undefined>;
 	notify: (message: string, level: NotifyLevel) => void;
 	setStatus: (key: string, text: string | undefined) => void;
 	confirm: (title: string, message: string) => Promise<boolean>;
+	input: (title: string, placeholder?: string) => Promise<string | undefined>;
 };
 
 export type MockSessionManager = {
@@ -93,12 +96,14 @@ export function createMockSessionManager(initialSessionFile = "session-controlle
 	};
 }
 
-export function createMockUi(confirmResponses: boolean[] = []): MockUi {
+export function createMockUi(confirmResponses: boolean[] = [], inputResponses: Array<string | undefined> = []): MockUi {
 	return {
 		notifications: [],
 		statuses: [],
 		confirmCalls: [],
 		confirmResponses: [...confirmResponses],
+		inputCalls: [],
+		inputResponses: [...inputResponses],
 		notify(message, level) {
 			this.notifications.push({ message, level });
 		},
@@ -108,6 +113,10 @@ export function createMockUi(confirmResponses: boolean[] = []): MockUi {
 		async confirm(title, message) {
 			this.confirmCalls.push({ title, message });
 			return this.confirmResponses.length > 0 ? this.confirmResponses.shift()! : true;
+		},
+		async input(title, placeholder) {
+			this.inputCalls.push({ title, placeholder });
+			return this.inputResponses.length > 0 ? this.inputResponses.shift() : undefined;
 		},
 	};
 }

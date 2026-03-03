@@ -14,7 +14,7 @@ Key behavior:
 ## Commands
 
 - `/ralphi-init`
-- `/ralphi-prd <name> [description]`
+- `/ralphi-prd <name> <description>` (prompts in TUI if omitted)
 - `/ralphi-convert <prd-file>`
 - `/ralphi-finalize <runId>`
 - `/ralphi-loop-start [--max-iterations N]`

@@ -1,5 +1,50 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
 import type { RalphiRuntime } from "./runtime";
+
+function parsePrdArgs(args: string): { name: string; description: string } {
+	const trimmed = args.trim();
+	if (!trimmed) return { name: "", description: "" };
+	const [name, ...rest] = trimmed.split(/\s+/);
+	return {
+		name: name?.trim() ?? "",
+		description: rest.join(" ").trim(),
+	};
+}
+
+async function resolvePrdArgs(args: string, ctx: ExtensionCommandContext): Promise<string | null> {
+	const usage = "Usage: /ralphi-prd <name> <description>";
+	let { name, description } = parsePrdArgs(args);
+
+	if (!name) {
+		if (!ctx.hasUI) {
+			ctx.ui.notify(usage, "warning");
+			return null;
+		}
+
+		const inputName = await ctx.ui.input("PRD name", "e.g. user-auth");
+		name = inputName?.trim() ?? "";
+		if (!name) {
+			ctx.ui.notify("PRD name is required to start /ralphi-prd.", "warning");
+			return null;
+		}
+	}
+
+	if (!description) {
+		if (!ctx.hasUI) {
+			ctx.ui.notify(usage, "warning");
+			return null;
+		}
+
+		const inputDescription = await ctx.ui.input("PRD description", "Describe the feature to plan");
+		description = inputDescription?.trim() ?? "";
+		if (!description) {
+			ctx.ui.notify("PRD description is required to start /ralphi-prd.", "warning");
+			return null;
+		}
+	}
+
+	return `${name} ${description}`;
+}
 
 export function registerCommands(pi: ExtensionAPI, runtime: RalphiRuntime) {
 	pi.registerCommand("ralphi-init", {
@@ -12,12 +57,9 @@ export function registerCommands(pi: ExtensionAPI, runtime: RalphiRuntime) {
 	pi.registerCommand("ralphi-prd", {
 		description: "Run ralphi-prd skill with completion handshake + tree rewind",
 		handler: async (args, ctx) => {
-			const trimmed = args.trim();
-			if (!trimmed) {
-				ctx.ui.notify("Usage: /ralphi-prd <name> [description]", "warning");
-				return;
-			}
-			await runtime.startPhase(ctx, "ralphi-prd", trimmed);
+			const resolved = await resolvePrdArgs(args, ctx);
+			if (!resolved) return;
+			await runtime.startPhase(ctx, "ralphi-prd", resolved);
 		},
 	});
 
