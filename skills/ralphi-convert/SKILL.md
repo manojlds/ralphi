@@ -70,3 +70,15 @@ Order stories by dependency chain:
 3. Priority is based on dependency order (1 = first).
 4. All stories start with `passes: false` and empty `notes`.
 5. `branchName` is kebab-case, prefixed with `ralph/`.
+
+## Phase Completion Contract (Pi-native)
+
+When conversion is fully complete, call `ralphi_phase_done` exactly once.
+
+Use runtime-provided metadata:
+- `runId`: provided at phase start
+- `phase`: `"ralphi-convert"`
+- `summary`: concise summary of what was converted and archived (if applicable)
+- `outputs`: include `prd.json` plus any archive paths written
+
+Completion must be communicated only by calling `ralphi_phase_done`.

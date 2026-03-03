@@ -1,5 +1,5 @@
 {
-  "name": "@manojlds/pi-ralphi-ralph",
+  "name": "@manojlds/ralphi",
   "version": "0.1.0",
   "description": "Pi-native ralphi ralph extension with skill commands and fresh-context loop sessions.",
   "license": "MIT",

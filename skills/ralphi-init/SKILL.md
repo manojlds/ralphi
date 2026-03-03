@@ -312,3 +312,15 @@ Read the existing `.gitignore` first and only add entries that are missing. Do n
 - Skills for direct engine access (amp, claude, opencode, pi) are installed in `.agents/skills/`.
 - If the user wants to add more rules later, they can run `ralphi ralph add-rule "rule text"`.
 - The config file is intentionally simple YAML — users should feel comfortable editing it by hand.
+
+## Phase Completion Contract (Pi-native)
+
+When init setup is fully complete, call `ralphi_phase_done` exactly once.
+
+Use runtime-provided metadata:
+- `runId`: provided at phase start
+- `phase`: `"ralphi-init"`
+- `summary`: concise summary of what was configured
+- `outputs`: key files created/updated (for example `.ralphi/config.yaml`, `AGENTS.md`, `.gitignore`, `prek.toml`)
+
+Completion must be communicated only by calling `ralphi_phase_done`.

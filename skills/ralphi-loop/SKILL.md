@@ -74,11 +74,12 @@ Before committing, check if edited files have learnings worth preserving in near
 
 After completing a user story, check if ALL stories have `passes: true`.
 
-Always complete the iteration via tool call (never by marker text):
-- Call `ralphi_phase_done` with `complete: true` only when ALL stories are complete.
-- Otherwise call `ralphi_phase_done` with `complete: false`.
+Always complete the iteration via tool call:
+- Call `ralphi_phase_done` exactly once per iteration.
+- Use runtime-provided metadata: `runId` from kickoff, `phase: "ralphi-loop-iteration"`, concise `summary`, and `outputs`.
+- Set `complete: true` only when ALL stories are complete.
+- Otherwise set `complete: false`.
 
-Do not use `<promise>COMPLETE</promise>`.
 
 ## Important
 

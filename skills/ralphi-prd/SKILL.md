@@ -106,4 +106,17 @@ Write for junior developers and AI agents:
 - **Format:** Markdown (`.md`)
 - **Location:** `tasks/`
 - **Filename:** `prd-[feature-name].md` (kebab-case)
-- Save the file using the create_file tool
+- Save using the `write` tool (or `edit` if updating an existing PRD file).
+
+## Phase Completion Contract (Pi-native)
+
+When the PRD task is fully complete, call `ralphi_phase_done` exactly once.
+
+Use the run metadata provided by the runtime/system prompt:
+- `runId`: provided at phase start
+- `phase`: `"ralphi-prd"`
+- `summary`: short summary of what was finalized
+- `outputs`: include the PRD path you wrote (for example `tasks/prd-my-feature.md`)
+
+Completion must be communicated only by calling `ralphi_phase_done`.
+
