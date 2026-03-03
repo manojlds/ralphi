@@ -1,0 +1,699 @@
+import { randomUUID } from "node:crypto";
+import type {
+	BeforeAgentStartEvent,
+	ExtensionAPI,
+	ExtensionCommandContext,
+	ExtensionContext,
+} from "@mariozechner/pi-coding-agent";
+import { parseMaxIterations, renderOutputs } from "./helpers";
+import {
+	type LoopRun,
+	PHASE_KINDS,
+	type NonLoopPhaseName,
+	type PhaseDoneInput,
+	type PhaseRun,
+	type RalphiContext,
+} from "./types";
+
+const STATE_ENTRY_TYPE = "ralphi-state";
+const CHECKPOINT_ENTRY_TYPE = "ralphi-checkpoint";
+
+type PersistedState = {
+	phaseRuns: PhaseRun[];
+	loops: LoopRun[];
+	savedAt: string;
+};
+
+export class RalphiRuntime {
+	private readonly phaseRuns = new Map<string, PhaseRun>();
+	private readonly activePhaseBySession = new Map<string, string>();
+	private readonly loops = new Map<string, LoopRun>();
+
+	constructor(private readonly pi: ExtensionAPI) {}
+
+	private sessionKey(ctx: RalphiContext): string {
+		const sessionFile = ctx.sessionManager.getSessionFile();
+		if (sessionFile) return sessionFile;
+		return `memory:${ctx.sessionManager.getSessionId()}`;
+	}
+
+	private shortId(prefix: string): string {
+		return `${prefix}-${randomUUID().slice(0, 8)}`;
+	}
+
+	private sendUserMessage(ctx: RalphiContext, text: string, deliveryWhenBusy: "steer" | "followUp" = "steer") {
+		if (ctx.isIdle()) {
+			this.pi.sendUserMessage(text);
+		} else {
+			this.pi.sendUserMessage(text, { deliverAs: deliveryWhenBusy });
+		}
+	}
+
+	private appendRalphiEvent(kind: string, data: Record<string, unknown>) {
+		this.pi.appendEntry("ralphi-event", {
+			kind,
+			timestamp: new Date().toISOString(),
+			...data,
+		});
+	}
+
+	private snapshotState(): PersistedState {
+		return {
+			phaseRuns: [...this.phaseRuns.values()],
+			loops: [...this.loops.values()],
+			savedAt: new Date().toISOString(),
+		};
+	}
+
+	private rebuildIndexes() {
+		this.activePhaseBySession.clear();
+		for (const run of this.phaseRuns.values()) {
+			if (run.status === "running") {
+				this.activePhaseBySession.set(run.sessionKey, run.id);
+			}
+		}
+	}
+
+	private findCheckpointEntryId(ctx: RalphiContext, runId: string): string | null {
+		const sources = [ctx.sessionManager.getEntries(), ctx.sessionManager.getBranch()];
+		for (const entries of sources) {
+			for (let i = entries.length - 1; i >= 0; i--) {
+				const entry = entries[i] as any;
+				if (entry?.type !== "custom") continue;
+				if (entry?.customType !== CHECKPOINT_ENTRY_TYPE) continue;
+				if (entry?.data?.runId !== runId) continue;
+				if (typeof entry?.id === "string" && entry.id.length > 0) return entry.id;
+			}
+		}
+		return null;
+	}
+
+	private ensureCheckpointLeafId(ctx: RalphiContext, runId: string, phase: NonLoopPhaseName): string | null {
+		const existingLeaf = ctx.sessionManager.getLeafId();
+		if (existingLeaf) return existingLeaf;
+
+		this.pi.appendEntry(CHECKPOINT_ENTRY_TYPE, {
+			runId,
+			phase,
+			createdAt: new Date().toISOString(),
+			note: "Synthetic checkpoint for ralphi phase rewind",
+		});
+
+		const leafAfterAppend = ctx.sessionManager.getLeafId();
+		if (leafAfterAppend) return leafAfterAppend;
+
+		const checkpointEntryId = this.findCheckpointEntryId(ctx, runId);
+		if (checkpointEntryId) return checkpointEntryId;
+
+		const latestEntry = ctx.sessionManager.getEntries().at(-1) as any;
+		return typeof latestEntry?.id === "string" ? latestEntry.id : null;
+	}
+
+	private persistState(ctx: RalphiContext) {
+		this.pi.appendEntry(STATE_ENTRY_TYPE, this.snapshotState());
+		this.updateLoopStatusLine(ctx);
+	}
+
+	private restoreStateFromSession(ctx: RalphiContext) {
+		const branch = ctx.sessionManager.getBranch();
+		let latest: PersistedState | null = null;
+
+		for (const entry of branch) {
+			if (entry.type !== "custom") continue;
+			if (entry.customType !== STATE_ENTRY_TYPE) continue;
+			const data = entry.data as Partial<PersistedState> | undefined;
+			if (!data) continue;
+			if (!Array.isArray(data.phaseRuns) || !Array.isArray(data.loops)) continue;
+			latest = {
+				phaseRuns: data.phaseRuns as PhaseRun[],
+				loops: data.loops as LoopRun[],
+				savedAt: String(data.savedAt ?? ""),
+			};
+		}
+
+		this.phaseRuns.clear();
+		this.loops.clear();
+		if (latest) {
+			for (const run of latest.phaseRuns) {
+				this.phaseRuns.set(run.id, run);
+			}
+			for (const loop of latest.loops) {
+				this.loops.set(loop.id, loop);
+			}
+		}
+		this.rebuildIndexes();
+		this.updateLoopStatusLine(ctx);
+	}
+
+	private activeLoop(): LoopRun | undefined {
+		return [...this.loops.values()].find((loop) => loop.active);
+	}
+
+	private findLoop(requested: string): LoopRun | undefined {
+		if (requested.trim()) return this.loops.get(requested.trim());
+		return this.activeLoop();
+	}
+
+	private updatePhaseStatusLine(ctx: RalphiContext) {
+		const key = this.sessionKey(ctx);
+		const current = [...this.phaseRuns.values()]
+			.filter((run) => run.sessionKey === key && run.status !== "completed")
+			.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+			.at(-1);
+		if (!current) {
+			ctx.ui.setStatus("ralphi-phase", undefined);
+			return;
+		}
+		const status = current.status === "awaiting_finalize" ? "awaiting finalize" : "running";
+		ctx.ui.setStatus("ralphi-phase", `🧩 ${current.phase} ${current.id} (${status})`);
+	}
+
+	private updateLoopStatusLine(ctx: RalphiContext) {
+		const loop = this.activeLoop();
+		if (!loop) {
+			ctx.ui.setStatus("ralphi-loop", undefined);
+		} else {
+			const suffix = loop.stopRequested ? " · stopping" : "";
+			ctx.ui.setStatus("ralphi-loop", `🔁 ${loop.id} ${loop.iteration}/${loop.maxIterations}${suffix}`);
+		}
+		this.updatePhaseStatusLine(ctx);
+	}
+
+	private async finalizeNonLoopRun(run: PhaseRun, ctx: ExtensionCommandContext) {
+		const outputs = renderOutputs(run.cwd, run.outputs);
+		let confirmed = true;
+
+		if (!run.autoConfirm && ctx.hasUI) {
+			const message = [
+				`Phase: ${run.phase}`,
+				`Run: ${run.id}`,
+				"",
+				"Summary:",
+				run.summary ?? "(none)",
+				"",
+				"Outputs:",
+				...outputs.lines,
+				"",
+				"Summarize branch and return to checkpoint?",
+			].join("\n");
+			confirmed = await ctx.ui.confirm("Finalize ralphi phase", message);
+		}
+
+		if (!confirmed) {
+			this.appendRalphiEvent("phase_finalize_cancelled", { runId: run.id, phase: run.phase });
+			this.persistState(ctx);
+			ctx.ui.notify(`Finalize cancelled for ${run.id}. Run /ralphi-finalize ${run.id} again when ready.`, "info");
+			return;
+		}
+
+		if (run.checkpointSessionFile && ctx.sessionManager.getSessionFile() !== run.checkpointSessionFile) {
+			const switched = await ctx.switchSession(run.checkpointSessionFile);
+			if (switched.cancelled) {
+				ctx.ui.notify("Could not switch back to checkpoint session.", "error");
+				return;
+			}
+		}
+
+		if (run.checkpointLeafId) {
+			const treeResult = await ctx.navigateTree(run.checkpointLeafId, {
+				summarize: true,
+				label: `ralphi:${run.phase}:summary:${run.id}`,
+			});
+			if (treeResult.cancelled) {
+				ctx.ui.notify("Tree navigation was cancelled; phase remains finalized but context was not rewound.", "warning");
+			}
+		} else {
+			ctx.ui.notify("No checkpoint leaf was available to rewind to.", "warning");
+		}
+
+		run.status = "completed";
+		this.appendRalphiEvent("phase_finalized", {
+			runId: run.id,
+			phase: run.phase,
+			summary: run.summary,
+			outputs: run.outputs,
+			missingOutputs: outputs.hasMissing,
+		});
+		this.persistState(ctx);
+		ctx.ui.notify(
+			`Finalized ${run.phase} (${run.id})${outputs.hasMissing ? " — some declared outputs are missing" : ""}`,
+			outputs.hasMissing ? "warning" : "info",
+		);
+	}
+
+	private async finalizeLoopRun(run: PhaseRun, ctx: ExtensionCommandContext) {
+		run.status = "completed";
+
+		if (!run.loopId) {
+			this.persistState(ctx);
+			ctx.ui.notify(`Loop metadata missing for ${run.id}`, "error");
+			return;
+		}
+
+		const loop = this.loops.get(run.loopId);
+		if (!loop) {
+			this.persistState(ctx);
+			ctx.ui.notify(`Loop ${run.loopId} not found`, "warning");
+			return;
+		}
+
+		if (ctx.sessionManager.getSessionFile() !== loop.controllerSessionFile) {
+			const switched = await ctx.switchSession(loop.controllerSessionFile);
+			if (switched.cancelled) {
+				ctx.ui.notify("Could not switch back to loop controller session.", "error");
+				return;
+			}
+		}
+
+		loop.activeIterationSessionFile = undefined;
+		this.appendRalphiEvent("loop_iteration_finalized", {
+			loopId: loop.id,
+			runId: run.id,
+			iteration: loop.iteration,
+			sessionFile: run.sessionFile,
+			summary: run.summary,
+			outputs: run.outputs,
+			complete: run.complete ?? false,
+		});
+		this.persistState(ctx);
+
+		if (run.complete) {
+			loop.active = false;
+			loop.activeIterationSessionFile = undefined;
+			this.updateLoopStatusLine(ctx);
+			this.appendRalphiEvent("loop_completed", { loopId: loop.id, iteration: loop.iteration });
+			this.persistState(ctx);
+			ctx.ui.notify(`Loop ${loop.id} complete after ${loop.iteration} iteration(s).`, "info");
+			return;
+		}
+
+		if (loop.stopRequested) {
+			loop.active = false;
+			loop.activeIterationSessionFile = undefined;
+			this.updateLoopStatusLine(ctx);
+			this.appendRalphiEvent("loop_stopped", { loopId: loop.id, iteration: loop.iteration });
+			this.persistState(ctx);
+			ctx.ui.notify(`Loop ${loop.id} stopped by user after iteration ${loop.iteration}.`, "info");
+			return;
+		}
+
+		if (loop.iteration >= loop.maxIterations) {
+			loop.active = false;
+			loop.activeIterationSessionFile = undefined;
+			this.updateLoopStatusLine(ctx);
+			this.appendRalphiEvent("loop_max_iterations", {
+				loopId: loop.id,
+				iteration: loop.iteration,
+				maxIterations: loop.maxIterations,
+			});
+			this.persistState(ctx);
+			ctx.ui.notify(`Loop ${loop.id} reached max iterations (${loop.maxIterations}).`, "warning");
+			return;
+		}
+
+		this.updateLoopStatusLine(ctx);
+		this.sendUserMessage(ctx, `/ralphi-loop-next ${loop.id}`, "steer");
+	}
+
+	async startPhase(ctx: ExtensionCommandContext, phase: NonLoopPhaseName, args: string) {
+		this.restoreStateFromSession(ctx);
+		const key = this.sessionKey(ctx);
+		const activeRunId = this.activePhaseBySession.get(key);
+		if (activeRunId) {
+			ctx.ui.notify(`Another ralphi phase is already active in this session (${activeRunId}).`, "warning");
+			return;
+		}
+
+		const runId = this.shortId("run");
+		const checkpointLeafId = this.ensureCheckpointLeafId(ctx, runId, phase);
+		const currentSessionFile = ctx.sessionManager.getSessionFile();
+
+		const run: PhaseRun = {
+			id: runId,
+			phase,
+			status: "running",
+			sessionKey: key,
+			sessionFile: currentSessionFile,
+			checkpointLeafId,
+			checkpointSessionFile: currentSessionFile,
+			cwd: ctx.cwd,
+			createdAt: new Date().toISOString(),
+			autoConfirm: false,
+		};
+
+		this.phaseRuns.set(runId, run);
+		this.activePhaseBySession.set(key, runId);
+
+		if (checkpointLeafId) {
+			this.pi.setLabel(checkpointLeafId, `ralphi:${phase}:checkpoint:${runId}`);
+		} else {
+			ctx.ui.notify(
+				`Phase ${runId} has no checkpoint leaf; finalize will complete but cannot rewind with /tree semantics.`,
+				"warning",
+			);
+		}
+
+		const kickoff = `Load and execute the ${phase} skill now.
+If skill slash commands are available, you may invoke /skill:${phase}${args.trim().length > 0 ? ` ${args}` : ""}.
+
+Run contract for this phase:
+- Keep collaborating with the user until this phase is truly complete.
+- When complete, call tool ralphi_phase_done with:
+  - runId: "${runId}"
+  - phase: "${phase}"
+  - summary: short summary of what was completed
+  - outputs: list of key files written/updated
+- Only call ralphi_phase_done when the user-facing task is complete.`;
+
+		this.appendRalphiEvent("phase_started", { runId, phase, args: args.trim() || undefined });
+		this.persistState(ctx);
+		ctx.ui.notify(`Started ${phase} (${runId})`, "info");
+		this.sendUserMessage(ctx, kickoff, "steer");
+	}
+
+	async finalizeRun(ctx: ExtensionCommandContext, runId: string) {
+		this.restoreStateFromSession(ctx);
+		const run = this.phaseRuns.get(runId);
+		if (!run) {
+			ctx.ui.notify(`Run not found: ${runId}`, "error");
+			return;
+		}
+
+		if (run.status !== "awaiting_finalize") {
+			ctx.ui.notify(`Run ${runId} is not ready to finalize (status: ${run.status}).`, "warning");
+			return;
+		}
+
+		if (run.phase === "ralphi-loop-iteration") {
+			await this.finalizeLoopRun(run, ctx);
+		} else {
+			await this.finalizeNonLoopRun(run, ctx);
+		}
+	}
+
+	async runLoopIteration(ctx: ExtensionCommandContext, loopId: string) {
+		this.restoreStateFromSession(ctx);
+		const loop = this.loops.get(loopId);
+		if (!loop) {
+			ctx.ui.notify(`Loop not found: ${loopId}`, "error");
+			return;
+		}
+		if (!loop.active) {
+			ctx.ui.notify(`Loop ${loopId} is not active.`, "warning");
+			return;
+		}
+		if (loop.stopRequested) {
+			loop.active = false;
+			loop.activeIterationSessionFile = undefined;
+			this.updateLoopStatusLine(ctx);
+			this.appendRalphiEvent("loop_stopped", { loopId: loop.id, iteration: loop.iteration });
+			this.persistState(ctx);
+			ctx.ui.notify(`Loop ${loop.id} stopped.`, "info");
+			return;
+		}
+		if (loop.iteration >= loop.maxIterations) {
+			loop.active = false;
+			loop.activeIterationSessionFile = undefined;
+			this.updateLoopStatusLine(ctx);
+			this.appendRalphiEvent("loop_max_iterations", {
+				loopId: loop.id,
+				iteration: loop.iteration,
+				maxIterations: loop.maxIterations,
+			});
+			this.persistState(ctx);
+			ctx.ui.notify(`Loop ${loop.id} reached max iterations (${loop.maxIterations}).`, "warning");
+			return;
+		}
+
+		if (ctx.sessionManager.getSessionFile() !== loop.controllerSessionFile) {
+			const switched = await ctx.switchSession(loop.controllerSessionFile);
+			if (switched.cancelled) {
+				ctx.ui.notify("Could not switch to loop controller session.", "error");
+				return;
+			}
+		}
+
+		const nextIteration = loop.iteration + 1;
+		this.appendRalphiEvent("loop_iteration_starting", { loopId: loop.id, iteration: nextIteration });
+
+		const child = await ctx.newSession({ parentSession: loop.controllerSessionFile });
+		if (child.cancelled) {
+			ctx.ui.notify("Creating iteration session was cancelled.", "warning");
+			return;
+		}
+
+		loop.iteration += 1;
+		const currentIterationSessionFile = ctx.sessionManager.getSessionFile();
+		loop.activeIterationSessionFile = currentIterationSessionFile;
+		if (currentIterationSessionFile) {
+			loop.iterationSessionFiles.push(currentIterationSessionFile);
+		}
+		this.pi.setSessionName(`ralphi loop ${loop.id} · iter ${loop.iteration}`);
+
+		const key = this.sessionKey(ctx);
+		const runId = this.shortId("iter");
+		const run: PhaseRun = {
+			id: runId,
+			phase: "ralphi-loop-iteration",
+			status: "running",
+			sessionKey: key,
+			sessionFile: ctx.sessionManager.getSessionFile(),
+			checkpointLeafId: null,
+			checkpointSessionFile: loop.controllerSessionFile,
+			cwd: ctx.cwd,
+			createdAt: new Date().toISOString(),
+			autoConfirm: true,
+			loopId: loop.id,
+			iteration: loop.iteration,
+		};
+
+		this.phaseRuns.set(runId, run);
+		this.activePhaseBySession.set(key, runId);
+		this.persistState(ctx);
+
+		const kickoff = `Load and execute the ralphi-loop skill now.
+If skill slash commands are available, you may invoke /skill:ralphi-loop.
+
+Loop run contract:
+- loopId: ${loop.id}
+- runId: ${run.id}
+- iteration: ${loop.iteration}/${loop.maxIterations}
+- Work one story as instructed by the skill.
+- When this iteration is complete, call ralphi_phase_done with:
+  - runId: "${run.id}"
+  - phase: "ralphi-loop-iteration"
+  - summary: what was completed this iteration
+  - outputs: key files changed
+  - complete: true only when all stories are done`;
+
+		ctx.ui.notify(`Loop ${loop.id}: starting iteration ${loop.iteration}/${loop.maxIterations}`, "info");
+		this.updateLoopStatusLine(ctx);
+		this.sendUserMessage(ctx, kickoff, "steer");
+	}
+
+	async startLoop(ctx: ExtensionCommandContext, args: string) {
+		this.restoreStateFromSession(ctx);
+		const existing = this.activeLoop();
+		if (existing) {
+			ctx.ui.notify(`Loop already active: ${existing.id}`, "warning");
+			return;
+		}
+
+		const controllerSessionFile = ctx.sessionManager.getSessionFile();
+		if (!controllerSessionFile) {
+			ctx.ui.notify("Loop requires a persisted session file (interactive session).", "error");
+			return;
+		}
+
+		const loopId = this.shortId("loop");
+		const loop: LoopRun = {
+			id: loopId,
+			controllerSessionFile,
+			maxIterations: parseMaxIterations(args),
+			iteration: 0,
+			active: true,
+			stopRequested: false,
+			createdAt: new Date().toISOString(),
+			iterationSessionFiles: [],
+		};
+		this.loops.set(loopId, loop);
+
+		const leaf = ctx.sessionManager.getLeafId();
+		if (leaf) {
+			this.pi.setLabel(leaf, `ralphi:loop:controller:${loopId}`);
+		}
+
+		this.appendRalphiEvent("loop_started", { loopId: loop.id, maxIterations: loop.maxIterations });
+		this.persistState(ctx);
+		ctx.ui.notify(`Started loop ${loop.id} (max ${loop.maxIterations} iterations)`, "info");
+		this.updateLoopStatusLine(ctx);
+		this.sendUserMessage(ctx, `/ralphi-loop-next ${loop.id}`, "steer");
+	}
+
+	async stopLoop(ctx: ExtensionCommandContext, requested: string) {
+		this.restoreStateFromSession(ctx);
+		const loop = this.findLoop(requested);
+		if (!loop) {
+			ctx.ui.notify("No active loop found.", "warning");
+			return;
+		}
+		loop.stopRequested = true;
+		this.appendRalphiEvent("loop_stop_requested", { loopId: loop.id, iteration: loop.iteration });
+		this.persistState(ctx);
+		this.updateLoopStatusLine(ctx);
+		ctx.ui.notify(`Stop requested for loop ${loop.id}. It will stop after current iteration finalizes.`, "info");
+	}
+
+	async openLoop(ctx: ExtensionCommandContext, requested: string) {
+		this.restoreStateFromSession(ctx);
+		const loop = this.findLoop(requested);
+		if (!loop) {
+			ctx.ui.notify("No active loop found.", "warning");
+			return;
+		}
+		if (!loop.activeIterationSessionFile) {
+			ctx.ui.notify("Loop has no active iteration session right now.", "warning");
+			return;
+		}
+		const switched = await ctx.switchSession(loop.activeIterationSessionFile);
+		if (switched.cancelled) {
+			ctx.ui.notify("Switch to loop session was cancelled.", "warning");
+			return;
+		}
+		ctx.ui.notify(`Switched to loop iteration session for ${loop.id}.`, "info");
+	}
+
+	async openLoopController(ctx: ExtensionCommandContext, requested: string) {
+		this.restoreStateFromSession(ctx);
+		const loop = this.findLoop(requested);
+		if (!loop) {
+			ctx.ui.notify("No active loop found.", "warning");
+			return;
+		}
+		const switched = await ctx.switchSession(loop.controllerSessionFile);
+		if (switched.cancelled) {
+			ctx.ui.notify("Switch back to controller was cancelled.", "warning");
+			return;
+		}
+		ctx.ui.notify(`Switched to loop controller session for ${loop.id}.`, "info");
+	}
+
+	showLoopStatus(ctx: ExtensionCommandContext) {
+		this.restoreStateFromSession(ctx);
+		const activeRuns = [...this.phaseRuns.values()].filter((r) => r.status !== "completed");
+		const activeLoops = [...this.loops.values()].filter((l) => l.active);
+
+		if (activeRuns.length === 0 && activeLoops.length === 0) {
+			ctx.ui.notify("No active ralphi runs.", "info");
+			return;
+		}
+
+		const lines: string[] = [];
+		if (activeLoops.length > 0) {
+			lines.push("Loops:");
+			for (const loop of activeLoops) {
+				lines.push(`- ${loop.id}: iteration ${loop.iteration}/${loop.maxIterations}${loop.stopRequested ? " (stop requested)" : ""}`);
+				if (loop.activeIterationSessionFile) {
+					lines.push(`  active iteration session: ${loop.activeIterationSessionFile}`);
+				}
+			}
+			lines.push("  use /ralphi-loop-open <loopId> to inspect active iteration session");
+			lines.push("");
+		}
+
+		if (activeRuns.length > 0) {
+			lines.push("Phase runs:");
+			for (const run of activeRuns) {
+				lines.push(`- ${run.id}: ${run.phase} [${run.status}]`);
+			}
+		}
+
+		ctx.ui.notify(lines.join("\n"), "info");
+	}
+
+	async markPhaseDone(ctx: ExtensionContext, params: PhaseDoneInput): Promise<{ ok: boolean; text: string }> {
+		this.restoreStateFromSession(ctx);
+		const run = this.phaseRuns.get(params.runId);
+		if (!run) {
+			return { ok: false, text: `Run not found: ${params.runId}` };
+		}
+
+		if (run.phase !== params.phase) {
+			return {
+				ok: false,
+				text: `Phase mismatch for run ${params.runId}: expected ${run.phase}, got ${params.phase}`,
+			};
+		}
+
+		run.summary = params.summary;
+		run.outputs = params.outputs ?? [];
+		run.complete = params.complete ?? false;
+		run.status = "awaiting_finalize";
+		this.activePhaseBySession.delete(run.sessionKey);
+		this.appendRalphiEvent("phase_done_called", {
+			runId: run.id,
+			phase: run.phase,
+			summary: run.summary,
+			outputs: run.outputs,
+			complete: run.complete,
+		});
+		this.persistState(ctx);
+
+		if (run.phase !== "ralphi-loop-iteration" && ctx.hasUI) {
+			const outputs = renderOutputs(run.cwd, run.outputs);
+			const confirmed = await ctx.ui.confirm(
+				"Finalize ralphi phase",
+				[
+					`Phase: ${run.phase}`,
+					`Run: ${run.id}`,
+					"",
+					"Summary:",
+					run.summary ?? "(none)",
+					"",
+					"Outputs:",
+					...outputs.lines,
+					"",
+					"Proceed with summarize + rewind now?",
+				].join("\n"),
+			);
+			if (!confirmed) {
+				this.appendRalphiEvent("phase_finalize_cancelled", { runId: run.id, phase: run.phase, source: "tool_confirm" });
+				this.persistState(ctx);
+				return {
+					ok: true,
+					text: `Completion recorded for ${run.phase} (${run.id}), but finalize was cancelled in confirmation dialog. Run /ralphi-finalize ${run.id} when ready.`,
+				};
+			}
+			run.autoConfirm = true;
+		}
+
+		this.persistState(ctx);
+		this.sendUserMessage(ctx, `/ralphi-finalize ${run.id}`, "steer");
+		return { ok: true, text: `Recorded completion for ${run.phase} (${run.id}). Finalize requested.` };
+	}
+
+	handleSessionStart(ctx: ExtensionContext) {
+		this.restoreStateFromSession(ctx);
+	}
+
+	handleSessionSwitch(ctx: ExtensionContext) {
+		this.restoreStateFromSession(ctx);
+	}
+
+	handleBeforeAgentStart(event: BeforeAgentStartEvent, ctx: ExtensionContext): { systemPrompt: string } | void {
+		const runId = this.activePhaseBySession.get(this.sessionKey(ctx));
+		if (!runId) return;
+		const run = this.phaseRuns.get(runId);
+		if (!run || run.status !== "running") return;
+
+		const toolHint = `\n[RALPHI PHASE]\nYou are executing ${run.phase} (runId=${run.id}).\nContinue collaborating with the user until this phase is complete.\nWhen complete, call tool ralphi_phase_done with:\n{\n  \"runId\": \"${run.id}\",\n  \"phase\": \"${run.phase}\",\n  \"summary\": \"...\",\n  \"outputs\": [\"path1\", \"path2\"]${run.phase === "ralphi-loop-iteration" ? ',\n  \"complete\": false' : ""}\n}\nDo not call the tool early.`;
+
+		return {
+			systemPrompt: event.systemPrompt + "\n\n" + toolHint,
+		};
+	}
+
+	phaseKinds() {
+		return PHASE_KINDS;
+	}
+}

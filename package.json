@@ -1,0 +1,41 @@
+{
+  "name": "@manojlds/pi-ralphi-ralph",
+  "version": "0.1.0",
+  "description": "Pi-native ralphi ralph extension with skill commands and fresh-context loop sessions.",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "ralphi",
+    "ralph"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/manojlds/ralphi.git"
+  },
+  "homepage": "https://github.com/manojlds/ralphi",
+  "bugs": "https://github.com/manojlds/ralphi/issues",
+  "scripts": {
+    "test:unit:ralphi-extension": "vitest run --config vitest.config.ts",
+    "test:unit:ralphi-extension:watch": "vitest --config vitest.config.ts"
+  },
+  "pi": {
+    "extensions": [
+      "extensions/ralphi/index.ts"
+    ],
+    "skills": [
+      "skills/ralphi-init/SKILL.md",
+      "skills/ralphi-prd/SKILL.md",
+      "skills/ralphi-convert/SKILL.md",
+      "skills/ralphi-loop/SKILL.md"
+    ]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-coding-agent": "*",
+    "@sinclair/typebox": "*"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
+  }
+}

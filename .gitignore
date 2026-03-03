@@ -1,0 +1,8 @@
+node_modules/
+*.log
+
+# Ralph loop working files (local state)
+prd.json
+progress.txt
+.ralphi/
+.last-branch
