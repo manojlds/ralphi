@@ -10,6 +10,7 @@ Key behavior:
 - Commands are namespaced under `/ralphi-*`
 - Completion is driven by tool calls via `ralphi_phase_done`
 - Loop completion is **tool-only** (`complete: true`), not marker-text based
+- Loop iteration sessions are named from `prd.json` next pending story when available
 
 ## Commands
 
@@ -20,8 +21,8 @@ Key behavior:
 - `/ralphi-loop-start [--max-iterations N]`
 - `/ralphi-loop-next <loopId>`
 - `/ralphi-loop-stop [loopId]`
-- `/ralphi-loop-open [loopId]`
-- `/ralphi-loop-controller [loopId]`
+- `/ralphi-loop-open [loopId]` (interactive selector when omitted in TUI)
+- `/ralphi-loop-controller [loopId]` (interactive selector when omitted in TUI)
 - `/ralphi-loop-status`
 
 ## Tool contract

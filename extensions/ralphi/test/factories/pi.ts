@@ -12,11 +12,14 @@ export type MockUi = {
 	statuses: Array<{ key: string; text: string | undefined }>;
 	confirmCalls: Array<{ title: string; message: string }>;
 	confirmResponses: boolean[];
+	selectCalls: Array<{ title: string; options: string[] }>;
+	selectResponses: Array<string | undefined>;
 	inputCalls: Array<{ title: string; placeholder?: string }>;
 	inputResponses: Array<string | undefined>;
 	notify: (message: string, level: NotifyLevel) => void;
 	setStatus: (key: string, text: string | undefined) => void;
 	confirm: (title: string, message: string) => Promise<boolean>;
+	select: (title: string, options: string[]) => Promise<string | undefined>;
 	input: (title: string, placeholder?: string) => Promise<string | undefined>;
 };
 
@@ -96,12 +99,18 @@ export function createMockSessionManager(initialSessionFile = "session-controlle
 	};
 }
 
-export function createMockUi(confirmResponses: boolean[] = [], inputResponses: Array<string | undefined> = []): MockUi {
+export function createMockUi(
+	confirmResponses: boolean[] = [],
+	inputResponses: Array<string | undefined> = [],
+	selectResponses: Array<string | undefined> = [],
+): MockUi {
 	return {
 		notifications: [],
 		statuses: [],
 		confirmCalls: [],
 		confirmResponses: [...confirmResponses],
+		selectCalls: [],
+		selectResponses: [...selectResponses],
 		inputCalls: [],
 		inputResponses: [...inputResponses],
 		notify(message, level) {
@@ -113,6 +122,10 @@ export function createMockUi(confirmResponses: boolean[] = [], inputResponses: A
 		async confirm(title, message) {
 			this.confirmCalls.push({ title, message });
 			return this.confirmResponses.length > 0 ? this.confirmResponses.shift()! : true;
+		},
+		async select(title, options) {
+			this.selectCalls.push({ title, options });
+			return this.selectResponses.length > 0 ? this.selectResponses.shift() : undefined;
 		},
 		async input(title, placeholder) {
 			this.inputCalls.push({ title, placeholder });

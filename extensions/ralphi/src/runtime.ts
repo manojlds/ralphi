@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import type {
 	BeforeAgentStartEvent,
 	ExtensionAPI,
@@ -22,6 +24,16 @@ type PersistedState = {
 	phaseRuns: PhaseRun[];
 	loops: LoopRun[];
 	savedAt: string;
+};
+
+type PendingStory = {
+	id: string;
+	title: string;
+};
+
+type LoopSelection = {
+	loop?: LoopRun;
+	cancelled?: boolean;
 };
 
 export class RalphiRuntime {
@@ -169,6 +181,90 @@ export class RalphiRuntime {
 	private findLoop(requested: string): LoopRun | undefined {
 		if (requested.trim()) return this.loops.get(requested.trim());
 		return this.activeLoop();
+	}
+
+	private sortedLoops(): LoopRun[] {
+		return [...this.loops.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+	}
+
+	private loopOptionLabel(loop: LoopRun): string {
+		const state = loop.active ? "active" : "inactive";
+		const stopping = loop.stopRequested ? ", stopping" : "";
+		return `${loop.id} — iter ${loop.iteration}/${loop.maxIterations} (${state}${stopping})`;
+	}
+
+	private async resolveLoopSelection(
+		ctx: ExtensionCommandContext,
+		requested: string,
+		selectTitle: string,
+	): Promise<LoopSelection> {
+		const requestedId = requested.trim();
+		if (requestedId) {
+			return { loop: this.loops.get(requestedId) };
+		}
+
+		const loops = this.sortedLoops();
+		if (loops.length === 0) return {};
+		if (!ctx.hasUI || loops.length === 1) {
+			return { loop: this.activeLoop() ?? loops[0] };
+		}
+
+		const optionToLoop = new Map<string, LoopRun>();
+		const options = loops.map((loop) => {
+			const option = this.loopOptionLabel(loop);
+			optionToLoop.set(option, loop);
+			return option;
+		});
+
+		const selected = await ctx.ui.select(selectTitle, options);
+		if (!selected) return { cancelled: true };
+		return { loop: optionToLoop.get(selected) };
+	}
+
+	private parsePriority(value: unknown): number {
+		if (typeof value === "number" && Number.isFinite(value)) return value;
+		if (typeof value === "string") {
+			const parsed = Number.parseInt(value, 10);
+			if (Number.isFinite(parsed)) return parsed;
+		}
+		return Number.MAX_SAFE_INTEGER;
+	}
+
+	private truncateTitle(title: string, maxLength = 48): string {
+		const compact = title.replace(/\s+/g, " ").trim();
+		if (compact.length <= maxLength) return compact;
+		return `${compact.slice(0, maxLength - 1)}…`;
+	}
+
+	private nextPendingStory(cwd: string): PendingStory | null {
+		const prdPath = path.resolve(cwd, "prd.json");
+		if (!fs.existsSync(prdPath)) return null;
+
+		try {
+			const parsed = JSON.parse(fs.readFileSync(prdPath, "utf8")) as { userStories?: unknown };
+			if (!parsed || !Array.isArray(parsed.userStories)) return null;
+
+			const pending = parsed.userStories
+				.filter((story): story is Record<string, unknown> => Boolean(story) && typeof story === "object")
+				.filter((story) => story.passes !== true)
+				.map((story) => ({
+					id: typeof story.id === "string" ? story.id.trim() : "",
+					title: typeof story.title === "string" ? story.title.trim() : "",
+					priority: this.parsePriority(story.priority),
+				}))
+				.filter((story) => story.id.length > 0 && story.title.length > 0)
+				.sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id));
+
+			if (pending.length === 0) return null;
+			return { id: pending[0].id, title: pending[0].title };
+		} catch {
+			return null;
+		}
+	}
+
+	private buildIterationSessionName(loop: LoopRun, story: PendingStory | null): string {
+		if (!story) return `ralphi loop ${loop.id} · iter ${loop.iteration}`;
+		return `ralphi loop ${loop.id} · iter ${loop.iteration} · ${story.id} ${this.truncateTitle(story.title)}`;
 	}
 
 	private updatePhaseStatusLine(ctx: RalphiContext) {
@@ -463,7 +559,13 @@ Run contract for this phase:
 		}
 
 		const nextIteration = loop.iteration + 1;
-		this.appendRalphiEvent("loop_iteration_starting", { loopId: loop.id, iteration: nextIteration });
+		const pendingStory = this.nextPendingStory(ctx.cwd);
+		this.appendRalphiEvent("loop_iteration_starting", {
+			loopId: loop.id,
+			iteration: nextIteration,
+			storyId: pendingStory?.id,
+			storyTitle: pendingStory?.title,
+		});
 
 		const child = await ctx.newSession({ parentSession: loop.controllerSessionFile });
 		if (child.cancelled) {
@@ -477,7 +579,7 @@ Run contract for this phase:
 		if (currentIterationSessionFile) {
 			loop.iterationSessionFiles.push(currentIterationSessionFile);
 		}
-		this.pi.setSessionName(`ralphi loop ${loop.id} · iter ${loop.iteration}`);
+		this.pi.setSessionName(this.buildIterationSessionName(loop, pendingStory));
 
 		const key = this.sessionKey(ctx);
 		const runId = this.shortId("iter");
@@ -508,7 +610,8 @@ Loop run contract:
 - loopId: ${loop.id}
 - runId: ${run.id}
 - iteration: ${loop.iteration}/${loop.maxIterations}
-- Work one story as instructed by the skill.
+${pendingStory ? `- Suggested next story from prd.json: ${pendingStory.id} - ${pendingStory.title}
+` : ""}- Work one story as instructed by the skill.
 - When this iteration is complete, call ralphi_phase_done with:
   - runId: "${run.id}"
   - phase: "ralphi-loop-iteration"
@@ -576,30 +679,53 @@ Loop run contract:
 
 	async openLoop(ctx: ExtensionCommandContext, requested: string) {
 		this.restoreStateFromSession(ctx);
-		const loop = this.findLoop(requested);
+		const selection = await this.resolveLoopSelection(ctx, requested, "Select loop to inspect");
+		if (selection.cancelled) {
+			ctx.ui.notify("Loop selection cancelled.", "info");
+			return;
+		}
+
+		const loop = selection.loop;
 		if (!loop) {
-			ctx.ui.notify("No active loop found.", "warning");
+			const requestedId = requested.trim();
+			ctx.ui.notify(requestedId ? `Loop not found: ${requestedId}` : "No loops found.", "warning");
 			return;
 		}
-		if (!loop.activeIterationSessionFile) {
-			ctx.ui.notify("Loop has no active iteration session right now.", "warning");
+
+		const targetSessionFile = loop.activeIterationSessionFile ?? loop.iterationSessionFiles.at(-1);
+		if (!targetSessionFile) {
+			ctx.ui.notify("Loop has no iteration sessions yet.", "warning");
 			return;
 		}
-		const switched = await ctx.switchSession(loop.activeIterationSessionFile);
+
+		const switched = await ctx.switchSession(targetSessionFile);
 		if (switched.cancelled) {
 			ctx.ui.notify("Switch to loop session was cancelled.", "warning");
 			return;
 		}
-		ctx.ui.notify(`Switched to loop iteration session for ${loop.id}.`, "info");
+
+		if (loop.activeIterationSessionFile) {
+			ctx.ui.notify(`Switched to loop iteration session for ${loop.id}.`, "info");
+		} else {
+			ctx.ui.notify(`Switched to most recent iteration session for inactive loop ${loop.id}.`, "info");
+		}
 	}
 
 	async openLoopController(ctx: ExtensionCommandContext, requested: string) {
 		this.restoreStateFromSession(ctx);
-		const loop = this.findLoop(requested);
-		if (!loop) {
-			ctx.ui.notify("No active loop found.", "warning");
+		const selection = await this.resolveLoopSelection(ctx, requested, "Select loop controller");
+		if (selection.cancelled) {
+			ctx.ui.notify("Loop selection cancelled.", "info");
 			return;
 		}
+
+		const loop = selection.loop;
+		if (!loop) {
+			const requestedId = requested.trim();
+			ctx.ui.notify(requestedId ? `Loop not found: ${requestedId}` : "No loops found.", "warning");
+			return;
+		}
+
 		const switched = await ctx.switchSession(loop.controllerSessionFile);
 		if (switched.cancelled) {
 			ctx.ui.notify("Switch back to controller was cancelled.", "warning");
