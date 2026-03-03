@@ -1,5 +1,6 @@
 node_modules/
 *.log
+dist/
 
 # Ralph loop working files (local state)
 prd.json

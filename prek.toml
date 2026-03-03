@@ -3,9 +3,9 @@ repo = "local"
 hooks = [
   {
     id = "ralphi-check",
-    name = "ralphi ralph check",
+    name = "ralphi check",
     language = "system",
-    entry = "ralphi ralph check",
+    entry = "bash -lc 'if npx --no-install ralphi --help >/dev/null 2>&1; then npx --no-install ralphi check; else npm run check; fi'",
     always_run = true,
     pass_filenames = false,
   },

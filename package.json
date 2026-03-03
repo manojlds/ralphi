@@ -15,13 +15,17 @@
   },
   "homepage": "https://github.com/manojlds/ralphi",
   "bugs": "https://github.com/manojlds/ralphi/issues",
+  "bin": {
+    "ralphi": "bin/ralphi.js"
+  },
   "scripts": {
     "test:unit:ralphi-extension": "vitest run --config vitest.config.ts",
     "test:unit:ralphi-extension:watch": "vitest --config vitest.config.ts",
     "lint": "eslint . --ext .ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.json",
-    "check": "npm run lint && npm run typecheck && npm run test:unit:ralphi-extension"
+    "check": "npm run lint && npm run typecheck && npm run test:unit:ralphi-extension",
+    "ralphi:check": "node ./bin/ralphi.js check"
   },
   "pi": {
     "extensions": [

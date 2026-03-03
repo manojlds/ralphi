@@ -33,10 +33,21 @@ Key behavior:
 - `outputs` (optional)
 - `complete` (optional, defaults to `false`; set `true` to end loop)
 
+## CLI
+
+`ralphi` ships a small CLI for project-local quality checks:
+
+```bash
+npx --no-install ralphi check
+```
+
+It reads `.ralphi/config.yaml` and runs configured commands in order.
+
 ## Local development
 
 ```bash
 npm install
-npm run test:unit:ralphi-extension
+npm run check
+npm run ralphi:check
 npm pack --dry-run
 ```

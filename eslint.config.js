@@ -8,11 +8,18 @@ export default [
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ["**/*.ts"],
+    files: ["**/*.{js,ts}"],
     languageOptions: {
       ecmaVersion: "latest",
-      sourceType: "module"
-    },
+      sourceType: "module",
+      globals: {
+        console: "readonly",
+        process: "readonly"
+      }
+    }
+  },
+  {
+    files: ["**/*.ts"],
     rules: {
       "@typescript-eslint/no-explicit-any": "off",
       "no-useless-escape": "off"
