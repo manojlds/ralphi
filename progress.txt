@@ -1,0 +1,63 @@
+## Codebase Patterns
+- Tools are registered in `extensions/ralphi/src/tools.ts` via `registerTools()` — each tool uses TypeBox schemas for parameters
+- Tool logic should be extracted into separate files (e.g. `ask-tool.ts`) and imported by `tools.ts` for testability
+- Mock-based tests use factories from `extensions/ralphi/test/factories/pi.ts` — `createMockUi()` accepts arrays of pre-queued responses for `confirm`, `input`, and `select`
+- Pi UI API: `select()` returns `string | undefined` (single-select only), `input()` returns `string | undefined`, `confirm()` returns `boolean` — no native multi-select
+- Multi-select is implemented via iterative `select()` calls with a "Done" sentinel option
+- All quality checks via `npm run check` (lint + typecheck + tests); pre-commit hook enforces this
+- Headless/non-interactive fallback pattern: tools that need UI should accept optional pre-supplied params (`providedAnswers`) and validate them; fail with actionable error + JSON example when neither UI nor pre-supplied params are available
+---
+
+## 2026-03-04T19:30:00Z - US-001
+Session: N/A
+- Implemented `ralphi_ask_user_question` tool registered in the extension
+- Tool accepts array of questions with IDs, prompt text, type (single/multi), options, and optional allowOther flag
+- Single-select uses Pi `ui.select()`; multi-select uses iterative `ui.select()` with "Done" sentinel
+- "Other…" option triggers `ui.input()` for free-text entry
+- Returns concise text summary + structured `{ answers: { [id]: { selected, otherText? } } }` details
+- Headless mode (no UI) returns clear error listing the questions that need answers
+- Files changed:
+  - `extensions/ralphi/src/ask-tool.ts` (new — core ask logic)
+  - `extensions/ralphi/src/tools.ts` (registers new tool)
+  - `extensions/ralphi/test/ask-tool.test.ts` (new — 14 unit tests)
+- **Learnings for future iterations:**
+  - Pi has no native multi-select UI primitive — must iterate with `ui.select()`
+  - `createMockUi()` select/input responses are shifted in order, making sequential UI flow testing straightforward
+  - Tool `execute` receives `ExtensionContext` (not `ExtensionCommandContext`) — only event context level APIs available
+---
+
+## 2026-03-04T19:55:00Z - US-002
+Session: N/A
+- Implemented phase-scoped availability for `ralphi_ask_user_question` tool
+- Added `ASK_TOOL_PHASES` constant in `types.ts` restricting ask tool to `ralphi-init` and `ralphi-prd`
+- Added `getActivePhaseForSession()` method to `RalphiRuntime` for phase introspection
+- Added runtime enforcement in `tools.ts` — tool returns error with clear message when called outside allowed phases
+- Added system prompt guidance in `handleBeforeAgentStart` — mentions ask tool availability for init/prd phases only
+- Updated tool description to document phase restriction
+- ralphi-convert and ralphi-loop-iteration behavior completely unchanged
+- Files changed:
+  - `extensions/ralphi/src/types.ts` (added `ASK_TOOL_PHASES` constant)
+  - `extensions/ralphi/src/runtime.ts` (added `getActivePhaseForSession()`, system prompt guidance)
+  - `extensions/ralphi/src/tools.ts` (phase enforcement in ask tool execute, updated description)
+  - `extensions/ralphi/test/phase-scoped-ask.test.ts` (new — 18 unit tests)
+- **Learnings for future iterations:**
+  - Runtime phase introspection: use `getActivePhaseForSession(ctx)` to check the current phase from any tool
+  - `ASK_TOOL_PHASES` constant is the single source of truth for which phases support interactive questioning
+  - Phase-scoping pattern: combine runtime enforcement (tool-level reject) + system prompt guidance (agent-level hint) for robust tool availability control
+---
+
+## 2026-03-04T20:06:00Z - US-003
+Session: N/A
+- Enhanced headless error message in `executeAskUserQuestion` with per-question type (single/multi-select), options, allowOther info, and a concrete JSON example of the `providedAnswers` parameter
+- Added optional `providedAnswers` parameter to `AskUserQuestionParams` schema — allows headless/non-interactive users to pre-supply answers keyed by question ID
+- Added `validateProvidedAnswers()` function with thorough validation: missing IDs, invalid options, single-select count, multi-select count, Other without allowOther, missing otherText, unknown IDs
+- Added `buildHeadlessErrorMessage()` helper for structured, actionable error output
+- No silent fallback to defaults: tool always fails with `isError: true` when UI unavailable and no `providedAnswers`
+- Files changed:
+  - `extensions/ralphi/src/ask-tool.ts` (added ProvidedAnswerSchema, providedAnswers param, validation, enhanced headless error)
+  - `extensions/ralphi/test/ask-tool.test.ts` (16 new tests: headless error format, providedAnswers happy path, validation failures)
+- **Learnings for future iterations:**
+  - TypeBox `Type.Record()` is useful for dynamic key-value schemas like `providedAnswers`
+  - Validation functions should return discriminated unions (`{ valid: true, answers } | { valid: false, errors }`) for type-safe branching
+  - When adding optional parameters to existing schemas, all existing tests continue to pass since the param is optional
+---
