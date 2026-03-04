@@ -19,6 +19,7 @@ import {
 
 const STATE_ENTRY_TYPE = "ralphi-state";
 const CHECKPOINT_ENTRY_TYPE = "ralphi-checkpoint";
+const STATE_FILE_PATH = path.join(".ralphi", "runtime-state.json");
 
 type PersistedState = {
 	phaseRuns: PhaseRun[];
@@ -137,14 +138,55 @@ export class RalphiRuntime {
 		return typeof latestEntry?.id === "string" ? latestEntry.id : null;
 	}
 
+	private stateFile(cwd: string): string {
+		return path.join(cwd, STATE_FILE_PATH);
+	}
+
+	private readStateFile(cwd: string): PersistedState | null {
+		try {
+			const raw = fs.readFileSync(this.stateFile(cwd), "utf8");
+			const parsed = JSON.parse(raw) as Partial<PersistedState>;
+			if (!Array.isArray(parsed.phaseRuns) || !Array.isArray(parsed.loops)) return null;
+			return {
+				phaseRuns: parsed.phaseRuns as PhaseRun[],
+				loops: parsed.loops as LoopRun[],
+				savedAt: String(parsed.savedAt ?? ""),
+			};
+		} catch {
+			return null;
+		}
+	}
+
+	private writeStateFile(cwd: string, state: PersistedState) {
+		try {
+			const file = this.stateFile(cwd);
+			fs.mkdirSync(path.dirname(file), { recursive: true });
+			fs.writeFileSync(file, JSON.stringify(state, null, 2));
+		} catch {
+			// best-effort mirror for cross-session visibility
+		}
+	}
+
+	private newerState(a: PersistedState | null, b: PersistedState | null): PersistedState | null {
+		if (!a) return b;
+		if (!b) return a;
+		const aTime = Date.parse(a.savedAt);
+		const bTime = Date.parse(b.savedAt);
+		if (!Number.isFinite(aTime)) return b;
+		if (!Number.isFinite(bTime)) return a;
+		return bTime >= aTime ? b : a;
+	}
+
 	private persistState(ctx: RalphiContext) {
-		this.pi.appendEntry(STATE_ENTRY_TYPE, this.snapshotState());
+		const state = this.snapshotState();
+		this.pi.appendEntry(STATE_ENTRY_TYPE, state);
+		this.writeStateFile(ctx.cwd, state);
 		this.updateLoopStatusLine(ctx);
 	}
 
 	private restoreStateFromSession(ctx: RalphiContext) {
 		const branch = ctx.sessionManager.getBranch();
-		let latest: PersistedState | null = null;
+		let branchLatest: PersistedState | null = null;
 
 		for (const entry of branch) {
 			if (entry.type !== "custom") continue;
@@ -152,12 +194,15 @@ export class RalphiRuntime {
 			const data = entry.data as Partial<PersistedState> | undefined;
 			if (!data) continue;
 			if (!Array.isArray(data.phaseRuns) || !Array.isArray(data.loops)) continue;
-			latest = {
+			branchLatest = {
 				phaseRuns: data.phaseRuns as PhaseRun[],
 				loops: data.loops as LoopRun[],
 				savedAt: String(data.savedAt ?? ""),
 			};
 		}
+
+		const fileLatest = this.readStateFile(ctx.cwd);
+		const latest = this.newerState(branchLatest, fileLatest);
 
 		this.phaseRuns.clear();
 		this.loops.clear();
