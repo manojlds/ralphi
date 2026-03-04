@@ -2,8 +2,44 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
+import { registerEvents } from "../src/events";
 import { RalphiRuntime } from "../src/runtime";
 import { createMockCommandContext, createMockExtensionApi, createMockSessionManager, createMockUi } from "./factories/pi";
+
+/** Helper: extract runId from a kickoff message */
+function extractRunId(messages: Array<{ text: string }>): string {
+	const kickoff = messages.find((m) => m.text.includes("runId:"));
+	const match = kickoff?.text.match(/runId: "([^"]+)"/);
+	if (!match) throw new Error("runId not found in messages");
+	return match[1];
+}
+
+/** Helper: extract loopId from a kickoff message */
+function extractLoopId(messages: Array<{ text: string }>): string {
+	const kickoff = messages.find((m) => m.text.includes("loopId:"));
+	const match = kickoff?.text.match(/loopId: (loop-[a-f0-9]+)/);
+	if (!match) throw new Error("loopId not found in messages");
+	return match[1];
+}
+
+/** Helper: create a runtime with session_switch events wired up (simulates real Pi) */
+function createRuntimeWithEvents(sessionManager: ReturnType<typeof createMockSessionManager>, cwd: string) {
+	const api = createMockExtensionApi(sessionManager);
+	const runtime = new RalphiRuntime(api as any);
+	registerEvents(api as any, runtime);
+
+	const switchHandlers = api.registeredEvents.get("session_switch") ?? [];
+	const origSwitchTo = sessionManager.switchTo.bind(sessionManager);
+	const ui = createMockUi();
+	sessionManager.switchTo = (sessionFile: string) => {
+		origSwitchTo(sessionFile);
+		for (const handler of switchHandlers) {
+			(handler as any)({}, { cwd, hasUI: true, sessionManager, ui, isIdle: () => true });
+		}
+	};
+
+	return { api, runtime, ui };
+}
 
 describe("ralphi extension unit-test harness", () => {
 	it("runs runtime phase startup without a real Pi session", async () => {
@@ -27,6 +63,30 @@ describe("ralphi extension unit-test harness", () => {
 		}
 	});
 
+	it("startLoop directly runs first iteration without sending /ralphi-loop-next", async () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-direct-"));
+		try {
+			const sessionManager = createMockSessionManager();
+			const api = createMockExtensionApi(sessionManager);
+			const runtime = new RalphiRuntime(api as any);
+			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+			await runtime.startLoop(ctx as any, "--max-iterations 2");
+
+			// Should NOT have sent /ralphi-loop-next as a message
+			expect(api.sendUserMessages.some((m) => m.text.startsWith("/ralphi-loop-next"))).toBe(false);
+			// Should have sent the iteration kickoff directly
+			const kickoff = api.sendUserMessages.find((m) => m.text.includes("runId:"));
+			expect(kickoff).toBeDefined();
+			expect(kickoff!.text).toContain("ralphi-loop");
+			expect(kickoff!.text).toContain("iteration: 1/2");
+			// Should have created a child session
+			expect(ctx.newSessionCalls).toHaveLength(1);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
 	it("continues loop unless ralphi_phase_done sets complete=true", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-project-"));
 		try {
@@ -35,28 +95,115 @@ describe("ralphi extension unit-test harness", () => {
 			const runtime = new RalphiRuntime(api as any);
 			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
 
-			await runtime.startLoop(ctx as any, "--max-iterations 2");
-			const loopMessage = api.sendUserMessages.find((m) => m.text.startsWith("/ralphi-loop-next "));
-			expect(loopMessage).toBeDefined();
-			const loopId = loopMessage!.text.replace("/ralphi-loop-next ", "").trim();
-
-			await runtime.runLoopIteration(ctx as any, loopId);
-			const kickoff = api.sendUserMessages[api.sendUserMessages.length - 1].text;
-			const runIdMatch = kickoff.match(/runId: "([^"]+)"/);
-			expect(runIdMatch).toBeTruthy();
-			const runId = runIdMatch![1];
+			await runtime.startLoop(ctx as any, "--max-iterations 3");
+			const runId = extractRunId(api.sendUserMessages);
 
 			const done = await runtime.markPhaseDone(ctx as any, {
 				runId,
 				phase: "ralphi-loop-iteration",
-				summary: "all done <promise>COMPLETE</promise>",
+				summary: "completed first story",
 				complete: false,
 				outputs: [],
 			});
 			expect(done.ok).toBe(true);
 
 			await runtime.finalizeRun(ctx as any, runId);
-			expect(api.sendUserMessages[api.sendUserMessages.length - 1].text).toBe(`/ralphi-loop-next ${loopId}`);
+
+			// Should have started a second iteration (not sent /ralphi-loop-next)
+			expect(api.sendUserMessages.some((m) => m.text.startsWith("/ralphi-loop-next"))).toBe(false);
+			const secondKickoff = api.sendUserMessages[api.sendUserMessages.length - 1].text;
+			expect(secondKickoff).toContain("iteration: 2/3");
+			expect(secondKickoff).toContain("runId:");
+			// Two child sessions total (iter 1 + iter 2)
+			expect(ctx.newSessionCalls).toHaveLength(2);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("stops loop when ralphi_phase_done sets complete=true", async () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-complete-"));
+		try {
+			const sessionManager = createMockSessionManager();
+			const api = createMockExtensionApi(sessionManager);
+			const runtime = new RalphiRuntime(api as any);
+			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+			await runtime.startLoop(ctx as any, "--max-iterations 5");
+			const runId = extractRunId(api.sendUserMessages);
+
+			await runtime.markPhaseDone(ctx as any, {
+				runId,
+				phase: "ralphi-loop-iteration",
+				summary: "all stories done",
+				complete: true,
+				outputs: [],
+			});
+			await runtime.finalizeRun(ctx as any, runId);
+
+			// Should NOT have started another iteration
+			expect(ctx.newSessionCalls).toHaveLength(1);
+			expect(ctx.ui.notifications.some((n) => n.message.includes("complete after 1 iteration(s)"))).toBe(true);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("stops loop when max iterations reached", async () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-max-"));
+		try {
+			const sessionManager = createMockSessionManager();
+			const api = createMockExtensionApi(sessionManager);
+			const runtime = new RalphiRuntime(api as any);
+			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+			await runtime.startLoop(ctx as any, "--max-iterations 1");
+			const runId = extractRunId(api.sendUserMessages);
+
+			await runtime.markPhaseDone(ctx as any, {
+				runId,
+				phase: "ralphi-loop-iteration",
+				summary: "done",
+				complete: false,
+				outputs: [],
+			});
+			await runtime.finalizeRun(ctx as any, runId);
+
+			// Should NOT have started another iteration — max reached
+			expect(ctx.newSessionCalls).toHaveLength(1);
+			expect(ctx.ui.notifications.some((n) => n.message.includes("max iterations (1)"))).toBe(true);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("stops loop when stop is requested", async () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-stop-"));
+		try {
+			const sessionManager = createMockSessionManager();
+			const api = createMockExtensionApi(sessionManager);
+			const runtime = new RalphiRuntime(api as any);
+			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+			await runtime.startLoop(ctx as any, "--max-iterations 5");
+			const runId = extractRunId(api.sendUserMessages);
+			const loopId = extractLoopId(api.sendUserMessages);
+
+			// Request stop while iteration is running
+			await runtime.stopLoop(ctx as any, loopId);
+
+			await runtime.markPhaseDone(ctx as any, {
+				runId,
+				phase: "ralphi-loop-iteration",
+				summary: "done",
+				complete: false,
+				outputs: [],
+			});
+			await runtime.finalizeRun(ctx as any, runId);
+
+			// Should NOT have started another iteration — stop requested
+			expect(ctx.newSessionCalls).toHaveLength(1);
+			expect(ctx.ui.notifications.some((n) => n.message.includes("stopped by user"))).toBe(true);
 		} finally {
 			fs.rmSync(tempDir, { recursive: true, force: true });
 		}
@@ -71,16 +218,10 @@ describe("ralphi extension unit-test harness", () => {
 			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
 
 			await runtime.startLoop(ctx as any, "--max-iterations 2");
-			const loopMessage = api.sendUserMessages.find((m) => m.text.startsWith("/ralphi-loop-next "));
-			expect(loopMessage).toBeDefined();
-			const loopId = loopMessage!.text.replace("/ralphi-loop-next ", "").trim();
+			const actualRunId = extractRunId(api.sendUserMessages);
+			const loopId = extractLoopId(api.sendUserMessages);
 
-			await runtime.runLoopIteration(ctx as any, loopId);
-			const kickoff = api.sendUserMessages[api.sendUserMessages.length - 1].text;
-			const runIdMatch = kickoff.match(/runId: "([^"]+)"/);
-			expect(runIdMatch).toBeTruthy();
-			const actualRunId = runIdMatch![1];
-
+			// Use loopId instead of runId — should resolve via alias
 			const done = await runtime.markPhaseDone(ctx as any, {
 				runId: loopId,
 				phase: "ralphi-loop-iteration",
@@ -92,7 +233,9 @@ describe("ralphi extension unit-test harness", () => {
 			expect(done.text).toContain("Recorded completion for ralphi-loop-iteration");
 
 			await runtime.finalizeRun(ctx as any, actualRunId);
-			expect(api.sendUserMessages[api.sendUserMessages.length - 1].text).toBe(`/ralphi-loop-next ${loopId}`);
+			// Next iteration should have started
+			const lastMsg = api.sendUserMessages[api.sendUserMessages.length - 1].text;
+			expect(lastMsg).toContain("iteration: 2/2");
 		} finally {
 			fs.rmSync(tempDir, { recursive: true, force: true });
 		}
@@ -156,12 +299,6 @@ describe("ralphi extension unit-test harness", () => {
 			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
 
 			await runtime.startLoop(ctx as any, "--max-iterations 2");
-			const loopId = api.sendUserMessages
-				.find((m) => m.text.startsWith("/ralphi-loop-next "))!
-				.text.replace("/ralphi-loop-next ", "")
-				.trim();
-
-			await runtime.runLoopIteration(ctx as any, loopId);
 
 			expect(api.sessionNames.at(-1)).toContain("US-002 Highest priority story");
 			expect(api.sendUserMessages.at(-1)?.text).toContain("Suggested next story from prd.json: US-002 - Highest priority story");
@@ -222,6 +359,99 @@ describe("ralphi extension unit-test harness", () => {
 		}
 	});
 
+	it("session_switch during finalize does not clobber loop state", async () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-clobber-"));
+		try {
+			const sessionManager = createMockSessionManager();
+			const { api, runtime } = createRuntimeWithEvents(sessionManager, tempDir);
+			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+			await runtime.startLoop(ctx as any, "--max-iterations 3");
+			const runId = extractRunId(api.sendUserMessages);
+
+			await runtime.markPhaseDone(ctx as any, {
+				runId,
+				phase: "ralphi-loop-iteration",
+				summary: "Completed story US-001",
+				complete: false,
+				outputs: [],
+			});
+
+			await runtime.finalizeRun(ctx as any, runId);
+
+			// Verify iteration count is correct (should be iter 2, not reset to 0)
+			const lastKickoff = api.sendUserMessages[api.sendUserMessages.length - 1].text;
+			expect(lastKickoff).toContain("iteration: 2/3");
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("session_switch during finalize preserves complete=true termination", async () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-complete-event-"));
+		try {
+			const sessionManager = createMockSessionManager();
+			const { api, runtime } = createRuntimeWithEvents(sessionManager, tempDir);
+			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+			await runtime.startLoop(ctx as any, "--max-iterations 5");
+			const runId = extractRunId(api.sendUserMessages);
+
+			await runtime.markPhaseDone(ctx as any, {
+				runId,
+				phase: "ralphi-loop-iteration",
+				summary: "all stories done",
+				complete: true,
+				outputs: [],
+			});
+
+			await runtime.finalizeRun(ctx as any, runId);
+
+			// Should NOT have started a second iteration
+			expect(ctx.newSessionCalls).toHaveLength(1);
+			// Should say "1 iteration(s)", not "0 iteration(s)"
+			expect(ctx.ui.notifications.some((n) => n.message.includes("complete after 1 iteration(s)"))).toBe(true);
+			expect(ctx.ui.notifications.some((n) => n.message.includes("0 iteration(s)"))).toBe(false);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("multi-iteration loop runs correctly with session_switch events", async () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-multi-"));
+		try {
+			const sessionManager = createMockSessionManager();
+			const { api, runtime } = createRuntimeWithEvents(sessionManager, tempDir);
+			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+			await runtime.startLoop(ctx as any, "--max-iterations 5");
+
+			// Run 3 iterations
+			for (let i = 1; i <= 3; i++) {
+				const runId = extractRunId(
+					api.sendUserMessages.filter((m) => m.text.includes(`iteration: ${i}/5`)),
+				);
+
+				await runtime.markPhaseDone(ctx as any, {
+					runId,
+					phase: "ralphi-loop-iteration",
+					summary: `completed iteration ${i}`,
+					complete: i === 3,
+					outputs: [],
+				});
+
+				await runtime.finalizeRun(ctx as any, runId);
+			}
+
+			// Should have created exactly 3 child sessions
+			expect(ctx.newSessionCalls).toHaveLength(3);
+			// Loop should be complete
+			expect(ctx.ui.notifications.some((n) => n.message.includes("complete after 3 iteration(s)"))).toBe(true);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
 	it("restores loop state across sessions via project state file", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-state-"));
 		try {
@@ -231,11 +461,7 @@ describe("ralphi extension unit-test harness", () => {
 			const ctxA = createMockCommandContext({ sessionManager: sessionA, cwd: tempDir });
 
 			await runtimeA.startLoop(ctxA as any, "--max-iterations 3");
-			const loopId = apiA.sendUserMessages
-				.find((m) => m.text.startsWith("/ralphi-loop-next "))!
-				.text.replace("/ralphi-loop-next ", "")
-				.trim();
-			await runtimeA.runLoopIteration(ctxA as any, loopId);
+			const loopId = extractLoopId(apiA.sendUserMessages);
 
 			const sessionB = createMockSessionManager("controller-b.json");
 			const apiB = createMockExtensionApi(sessionB);
@@ -246,6 +472,98 @@ describe("ralphi extension unit-test harness", () => {
 
 			expect(ctxB.switchCalls.length).toBeGreaterThan(0);
 			expect(ctxB.switchCalls[0]).toMatch(/^session-\d+\.json$/);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("prevents starting a second loop while one is active", async () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-double-"));
+		try {
+			const sessionManager = createMockSessionManager();
+			const api = createMockExtensionApi(sessionManager);
+			const runtime = new RalphiRuntime(api as any);
+			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+			await runtime.startLoop(ctx as any, "--max-iterations 2");
+			await runtime.startLoop(ctx as any, "--max-iterations 2");
+
+			expect(ctx.ui.notifications.some((n) => n.message.includes("Loop already active"))).toBe(true);
+			// Only one child session created (from the first loop)
+			expect(ctx.newSessionCalls).toHaveLength(1);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("phase mismatch is rejected by markPhaseDone", async () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-mismatch-"));
+		try {
+			const sessionManager = createMockSessionManager();
+			const api = createMockExtensionApi(sessionManager);
+			const runtime = new RalphiRuntime(api as any);
+			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+			await runtime.startPhase(ctx as any, "ralphi-init", "");
+			const runId = extractRunId(api.sendUserMessages);
+
+			const done = await runtime.markPhaseDone(ctx as any, {
+				runId,
+				phase: "ralphi-prd",
+				summary: "wrong phase",
+				outputs: [],
+			});
+
+			expect(done.ok).toBe(false);
+			expect(done.text).toContain("Phase mismatch");
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects markPhaseDone for unknown runId", async () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-unknown-"));
+		try {
+			const sessionManager = createMockSessionManager();
+			const api = createMockExtensionApi(sessionManager);
+			const runtime = new RalphiRuntime(api as any);
+			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+			const done = await runtime.markPhaseDone(ctx as any, {
+				runId: "nonexistent-run",
+				phase: "ralphi-init",
+				summary: "should fail",
+				outputs: [],
+			});
+
+			expect(done.ok).toBe(false);
+			expect(done.text).toContain("Run not found");
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("state file reflects correct iteration after startLoop", async () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-state-file-"));
+		try {
+			const sessionManager = createMockSessionManager();
+			const api = createMockExtensionApi(sessionManager);
+			const runtime = new RalphiRuntime(api as any);
+			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+			await runtime.startLoop(ctx as any, "--max-iterations 5");
+
+			const stateFile = path.join(tempDir, ".ralphi", "runtime-state.json");
+			expect(fs.existsSync(stateFile)).toBe(true);
+			const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+
+			expect(state.loops).toHaveLength(1);
+			expect(state.loops[0].iteration).toBe(1);
+			expect(state.loops[0].active).toBe(true);
+			expect(state.loops[0].iterationSessionFiles).toHaveLength(1);
+			expect(state.phaseRuns).toHaveLength(1);
+			expect(state.phaseRuns[0].phase).toBe("ralphi-loop-iteration");
+			expect(state.phaseRuns[0].status).toBe("running");
 		} finally {
 			fs.rmSync(tempDir, { recursive: true, force: true });
 		}

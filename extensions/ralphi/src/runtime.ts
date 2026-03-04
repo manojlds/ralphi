@@ -43,6 +43,7 @@ export class RalphiRuntime {
 	private readonly loops = new Map<string, LoopRun>();
 	private readonly commandContextByRun = new Map<string, ExtensionCommandContext>();
 	private readonly pendingFinalizeRuns = new Set<string>();
+	private _suppressEventRestore = false;
 
 	constructor(private readonly pi: ExtensionAPI) {}
 
@@ -365,10 +366,15 @@ export class RalphiRuntime {
 		}
 
 		if (run.checkpointSessionFile && ctx.sessionManager.getSessionFile() !== run.checkpointSessionFile) {
-			const switched = await ctx.switchSession(run.checkpointSessionFile);
-			if (switched.cancelled) {
-				ctx.ui.notify("Could not switch back to checkpoint session.", "error");
-				return;
+			this._suppressEventRestore = true;
+			try {
+				const switched = await ctx.switchSession(run.checkpointSessionFile);
+				if (switched.cancelled) {
+					ctx.ui.notify("Could not switch back to checkpoint session.", "error");
+					return;
+				}
+			} finally {
+				this._suppressEventRestore = false;
 			}
 		}
 
@@ -401,6 +407,7 @@ export class RalphiRuntime {
 
 	private async finalizeLoopRun(run: PhaseRun, ctx: ExtensionCommandContext) {
 		run.status = "completed";
+		this.phaseRuns.set(run.id, run);
 
 		if (!run.loopId) {
 			this.persistState(ctx);
@@ -416,10 +423,15 @@ export class RalphiRuntime {
 		}
 
 		if (ctx.sessionManager.getSessionFile() !== loop.controllerSessionFile) {
-			const switched = await ctx.switchSession(loop.controllerSessionFile);
-			if (switched.cancelled) {
-				ctx.ui.notify("Could not switch back to loop controller session.", "error");
-				return;
+			this._suppressEventRestore = true;
+			try {
+				const switched = await ctx.switchSession(loop.controllerSessionFile);
+				if (switched.cancelled) {
+					ctx.ui.notify("Could not switch back to loop controller session.", "error");
+					return;
+				}
+			} finally {
+				this._suppressEventRestore = false;
 			}
 		}
 
@@ -470,7 +482,7 @@ export class RalphiRuntime {
 		}
 
 		this.updateLoopStatusLine(ctx);
-		this.sendUserMessage(ctx, `/ralphi-loop-next ${loop.id}`, "steer");
+		await this.runLoopIteration(ctx, loop.id);
 	}
 
 	async startPhase(ctx: ExtensionCommandContext, phase: NonLoopPhaseName, args: string) {
@@ -595,12 +607,17 @@ Run contract for this phase:
 			return;
 		}
 
-		if (ctx.sessionManager.getSessionFile() !== loop.controllerSessionFile) {
-			const switched = await ctx.switchSession(loop.controllerSessionFile);
-			if (switched.cancelled) {
-				ctx.ui.notify("Could not switch to loop controller session.", "error");
-				return;
+		this._suppressEventRestore = true;
+		try {
+			if (ctx.sessionManager.getSessionFile() !== loop.controllerSessionFile) {
+				const switched = await ctx.switchSession(loop.controllerSessionFile);
+				if (switched.cancelled) {
+					ctx.ui.notify("Could not switch to loop controller session.", "error");
+					return;
+				}
 			}
+		} finally {
+			this._suppressEventRestore = false;
 		}
 
 		const nextIteration = loop.iteration + 1;
@@ -612,10 +629,15 @@ Run contract for this phase:
 			storyTitle: pendingStory?.title,
 		});
 
-		const child = await ctx.newSession({ parentSession: loop.controllerSessionFile });
-		if (child.cancelled) {
-			ctx.ui.notify("Creating iteration session was cancelled.", "warning");
-			return;
+		this._suppressEventRestore = true;
+		try {
+			const child = await ctx.newSession({ parentSession: loop.controllerSessionFile });
+			if (child.cancelled) {
+				ctx.ui.notify("Creating iteration session was cancelled.", "warning");
+				return;
+			}
+		} finally {
+			this._suppressEventRestore = false;
 		}
 
 		loop.iteration += 1;
@@ -705,7 +727,7 @@ ${pendingStory ? `- Suggested next story from prd.json: ${pendingStory.id} - ${p
 		this.persistState(ctx);
 		ctx.ui.notify(`Started loop ${loop.id} (max ${loop.maxIterations} iterations)`, "info");
 		this.updateLoopStatusLine(ctx);
-		this.sendUserMessage(ctx, `/ralphi-loop-next ${loop.id}`, "steer");
+		await this.runLoopIteration(ctx, loop.id);
 	}
 
 	async stopLoop(ctx: ExtensionCommandContext, requested: string) {
@@ -948,11 +970,11 @@ ${pendingStory ? `- Suggested next story from prd.json: ${pendingStory.id} - ${p
 	}
 
 	handleSessionStart(ctx: ExtensionContext) {
-		this.restoreStateFromSession(ctx);
+		if (!this._suppressEventRestore) this.restoreStateFromSession(ctx);
 	}
 
 	handleSessionSwitch(ctx: ExtensionContext) {
-		this.restoreStateFromSession(ctx);
+		if (!this._suppressEventRestore) this.restoreStateFromSession(ctx);
 	}
 
 	handleBeforeAgentStart(event: BeforeAgentStartEvent, ctx: ExtensionContext): { systemPrompt: string } | void {
