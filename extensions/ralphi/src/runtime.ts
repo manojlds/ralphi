@@ -555,6 +555,12 @@ export class RalphiRuntime {
 			);
 		}
 
+		const prdGuidance =
+			phase === "ralphi-prd"
+				? `\n\nThe feature name and description have already been collected: "${args.trim()}".
+After loading the skill, use the ralphi_ask_user_question tool to ask 3-5 essential clarifying questions interactively before generating the PRD. Structure questions with meaningful options (single or multi-select) covering scope, goals, technical constraints, and success criteria. Only generate the PRD after gathering the user's answers.`
+				: "";
+
 		const kickoff = `Load and execute the ${phase} skill now.
 If skill slash commands are available, you may invoke /skill:${phase}${args.trim().length > 0 ? ` ${args}` : ""}.
 
@@ -565,7 +571,7 @@ Run contract for this phase:
   - phase: "${phase}"
   - summary: short summary of what was completed
   - outputs: list of key files written/updated
-- Only call ralphi_phase_done when the user-facing task is complete.`;
+- Only call ralphi_phase_done when the user-facing task is complete.${prdGuidance}`;
 
 		this.appendRalphiEvent("phase_started", { runId, phase, args: args.trim() || undefined });
 		this.persistState(ctx);
@@ -1023,6 +1029,10 @@ ${pendingStory ? `- Suggested next story from prd.json: ${pendingStory.id} - ${p
 
 		if (run.phase === "ralphi-init" || run.phase === "ralphi-prd") {
 			toolHint += `\n\nThe ralphi_ask_user_question tool is available in this phase to ask the user structured questions with selectable options (single/multi-select). Use it to gather requirements interactively before generating output.`;
+		}
+
+		if (run.phase === "ralphi-prd") {
+			toolHint += `\n\nFor ralphi-prd: The feature name and description have already been collected via the /ralphi-prd command. Use ralphi_ask_user_question to ask 3-5 essential clarifying questions about scope, goals, technical constraints, and success criteria before generating the PRD. Structure each question with concrete, meaningful options to guide the user. Only proceed to PRD generation after receiving answers.`;
 		}
 
 		return {

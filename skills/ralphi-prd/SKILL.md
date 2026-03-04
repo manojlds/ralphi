@@ -25,7 +25,36 @@ Ask only critical questions where the initial prompt is ambiguous. Focus on:
 - **Scope/Boundaries:** What should it NOT do?
 - **Success Criteria:** How do we know it's done?
 
-Format questions with lettered options so the user can respond with "1A, 2C, 3B":
+### Using the Interactive Ask Tool (Preferred)
+
+When the `ralphi_ask_user_question` tool is available (during `ralphi-prd` phase), use it to ask clarifying questions interactively with structured options:
+
+```json
+{
+  "questions": [
+    {
+      "id": "goal",
+      "prompt": "What is the primary goal?",
+      "type": "single",
+      "options": ["Option one", "Option two", "Option three"],
+      "allowOther": true
+    },
+    {
+      "id": "scope",
+      "prompt": "What is the scope?",
+      "type": "single",
+      "options": ["Minimal / MVP", "Full feature"],
+      "allowOther": true
+    }
+  ]
+}
+```
+
+This gives the user a guided, selectable experience. Use `type: "single"` for pick-one questions and `type: "multi"` for pick-many. Set `allowOther: true` when the user might have an answer outside the listed options.
+
+### Fallback: Text-Based Questions
+
+If the ask tool is not available, format questions with lettered options so the user can respond with "1A, 2C, 3B":
 
 ```
 1. What is the primary goal?
