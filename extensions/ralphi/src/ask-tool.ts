@@ -15,11 +15,28 @@ const QuestionSchema = Type.Object({
 	),
 });
 
+const ProvidedAnswerSchema = Type.Object({
+	selected: Type.Array(Type.String(), {
+		description: "Selected option(s). For single-select: exactly one. For multi-select: one or more.",
+	}),
+	otherText: Type.Optional(
+		Type.String({ description: "Free-text value when 'Other' is selected (requires allowOther on the question)" }),
+	),
+});
+
 export const AskUserQuestionParams = Type.Object({
 	questions: Type.Array(QuestionSchema, {
 		description: "One or more structured questions to ask the user",
 		minItems: 1,
 	}),
+	providedAnswers: Type.Optional(
+		Type.Record(Type.String(), ProvidedAnswerSchema, {
+			description:
+				"Pre-supplied answers keyed by question ID, for headless/non-interactive use. " +
+				"When provided, skips interactive UI and uses these answers directly. " +
+				'Example: { "project_type": { "selected": ["Web app"] }, "lang": { "selected": ["Other"], "otherText": "Rust" } }',
+		}),
+	),
 });
 
 export type AskUserQuestionInput = Static<typeof AskUserQuestionParams>;
@@ -115,13 +132,140 @@ async function askMultiSelect(ctx: ExtensionContext, question: QuestionInput): P
 	return { selected: [...selected], ...(otherText ? { otherText } : {}) };
 }
 
+function validateProvidedAnswers(
+	questions: QuestionInput[],
+	providedAnswers: Record<string, { selected: string[]; otherText?: string }>,
+): { valid: true; answers: Record<string, QuestionAnswer> } | { valid: false; errors: string[] } {
+	const errors: string[] = [];
+	const validated: Record<string, QuestionAnswer> = {};
+
+	for (const question of questions) {
+		const answer = providedAnswers[question.id];
+		if (!answer) {
+			errors.push(`Missing answer for question "${question.id}" ("${question.prompt}").`);
+			continue;
+		}
+
+		if (!Array.isArray(answer.selected)) {
+			errors.push(`Answer for "${question.id}" must have a "selected" array.`);
+			continue;
+		}
+
+		if (question.type === "single" && answer.selected.length !== 1) {
+			errors.push(
+				`Question "${question.id}" is single-select: provide exactly 1 selection, got ${answer.selected.length}.`,
+			);
+			continue;
+		}
+
+		if (question.type === "multi" && answer.selected.length === 0) {
+			errors.push(`Question "${question.id}" is multi-select: provide at least 1 selection.`);
+			continue;
+		}
+
+		const validOptions = new Set(question.options);
+		if (question.allowOther) validOptions.add("Other");
+
+		for (const sel of answer.selected) {
+			if (!validOptions.has(sel)) {
+				errors.push(
+					`Invalid selection "${sel}" for question "${question.id}". Valid options: ${[...validOptions].join(", ")}.`,
+				);
+			}
+		}
+
+		if (answer.selected.includes("Other") && !question.allowOther) {
+			errors.push(`Question "${question.id}" does not allow "Other" selections.`);
+		}
+
+		if (answer.selected.includes("Other") && (!answer.otherText || answer.otherText.trim().length === 0)) {
+			errors.push(
+				`Question "${question.id}" has "Other" selected but no "otherText" provided. Supply a free-text value.`,
+			);
+		}
+
+		if (!errors.length || !errors.some((e) => e.includes(question.id))) {
+			validated[question.id] = {
+				selected: answer.selected,
+				...(answer.otherText ? { otherText: answer.otherText.trim() } : {}),
+			};
+		}
+	}
+
+	// Check for extra keys not matching any question
+	const questionIds = new Set(questions.map((q) => q.id));
+	for (const key of Object.keys(providedAnswers)) {
+		if (!questionIds.has(key)) {
+			errors.push(`Unknown question ID "${key}" in providedAnswers. Valid IDs: ${[...questionIds].join(", ")}.`);
+		}
+	}
+
+	if (errors.length > 0) return { valid: false, errors };
+	return { valid: true, answers: validated };
+}
+
+function buildHeadlessErrorMessage(questions: QuestionInput[]): string {
+	const lines: string[] = [
+		"Interactive UI is not available (headless mode). Cannot ask user questions interactively.",
+		"",
+		"To continue, re-call this tool with a \"providedAnswers\" parameter containing answers for each question.",
+		"",
+		"Questions that need answers:",
+	];
+
+	for (const q of questions) {
+		lines.push(`  - ${q.id} (${q.type}-select): "${q.prompt}"`);
+		lines.push(`    Options: ${q.options.join(", ")}${q.allowOther ? ", Other (free-text via otherText)" : ""}`);
+	}
+
+	// Build a concrete JSON example
+	const example: Record<string, { selected: string[]; otherText?: string }> = {};
+	for (const q of questions) {
+		if (q.type === "single") {
+			example[q.id] = { selected: [q.options[0] ?? "YourChoice"] };
+		} else {
+			example[q.id] = { selected: q.options.length > 0 ? [q.options[0]] : ["YourChoice"] };
+		}
+	}
+
+	lines.push("");
+	lines.push("Example providedAnswers:");
+	lines.push(JSON.stringify(example, null, 2));
+
+	return lines.join("\n");
+}
+
 export async function executeAskUserQuestion(ctx: ExtensionContext, params: AskUserQuestionInput): Promise<AskToolResult> {
+	// Headless mode: use providedAnswers if available, otherwise fail with actionable error
 	if (!ctx.hasUI) {
-		const questionList = params.questions
-			.map((q) => `  - ${q.id}: "${q.prompt}" [options: ${q.options.join(", ")}]`)
-			.join("\n");
+		if (params.providedAnswers && Object.keys(params.providedAnswers).length > 0) {
+			const validation = validateProvidedAnswers(params.questions, params.providedAnswers);
+			if (!validation.valid) {
+				return {
+					text: `Provided answers failed validation:\n${validation.errors.map((e) => `  - ${e}`).join("\n")}\n\nFix the errors above and re-call the tool with corrected providedAnswers.`,
+					answers: {},
+					isError: true,
+				};
+			}
+
+			const summaryParts: string[] = [];
+			for (const question of params.questions) {
+				const answer = validation.answers[question.id];
+				const displayValues = answer.otherText
+					? [...answer.selected.filter((s) => s !== "Other"), `Other: "${answer.otherText}"`]
+					: answer.selected;
+				summaryParts.push(`${question.id}: ${displayValues.join(", ") || "(none)"}`);
+			}
+
+			return {
+				text: summaryParts.join("\n"),
+				answers: validation.answers,
+				isError: false,
+			};
+		}
+
 		return {
-			text: `Interactive UI is not available (headless mode). Cannot ask user questions.\n\nQuestions that need answers:\n${questionList}\n\nProvide answers directly in the conversation or as command arguments.`,
+			text: buildHeadlessErrorMessage(params.questions),
 			answers: {},
 			isError: true,
 		};
