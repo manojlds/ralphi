@@ -3,7 +3,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { AskUserQuestionParams, executeAskUserQuestion } from "./ask-tool";
 import type { RalphiRuntime } from "./runtime";
-import { PHASE_KINDS } from "./types";
+import { ASK_TOOL_PHASES, PHASE_KINDS } from "./types";
 
 export function registerTools(pi: ExtensionAPI, runtime: RalphiRuntime) {
 	pi.registerTool({
@@ -42,9 +42,25 @@ export function registerTools(pi: ExtensionAPI, runtime: RalphiRuntime) {
 		description:
 			"Ask the user one or more structured questions with selectable options. " +
 			"Supports single-select (pick one) and multi-select (pick one or more) interactions, " +
-			"with an optional 'Other' free-text path. Returns answers keyed by question ID.",
+			"with an optional 'Other' free-text path. Returns answers keyed by question ID. " +
+			"Only available during ralphi-init and ralphi-prd phases.",
 		parameters: AskUserQuestionParams,
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const activePhase = runtime.getActivePhaseForSession(ctx);
+			if (!activePhase || !ASK_TOOL_PHASES.includes(activePhase)) {
+				const phaseNote = activePhase ? `current phase: ${activePhase}` : "no active ralphi phase";
+				return {
+					content: [
+						{
+							type: "text",
+							text: `ralphi_ask_user_question is only available during ralphi-init and ralphi-prd phases (${phaseNote}). It cannot be used in other phases.`,
+						},
+					],
+					details: {},
+					isError: true,
+				};
+			}
+
 			const result = await executeAskUserQuestion(ctx, params);
 			return {
 				content: [{ type: "text", text: result.text }],

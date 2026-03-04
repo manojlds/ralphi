@@ -13,6 +13,7 @@ import {
 	PHASE_KINDS,
 	type NonLoopPhaseName,
 	type PhaseDoneInput,
+	type PhaseName,
 	type PhaseRun,
 	type RalphiContext,
 } from "./types";
@@ -1018,11 +1019,25 @@ ${pendingStory ? `- Suggested next story from prd.json: ${pendingStory.id} - ${p
 		const run = this.phaseRuns.get(runId);
 		if (!run || run.status !== "running") return;
 
-		const toolHint = `\n[RALPHI PHASE]\nYou are executing ${run.phase} (runId=${run.id}).\nContinue collaborating with the user until this phase is complete.\nWhen complete, call tool ralphi_phase_done with:\n{\n  \"runId\": \"${run.id}\",\n  \"phase\": \"${run.phase}\",\n  \"summary\": \"...\",\n  \"outputs\": [\"path1\", \"path2\"]${run.phase === "ralphi-loop-iteration" ? ',\n  \"complete\": false' : ""}\n}\nDo not call the tool early.`;
+		let toolHint = `\n[RALPHI PHASE]\nYou are executing ${run.phase} (runId=${run.id}).\nContinue collaborating with the user until this phase is complete.\nWhen complete, call tool ralphi_phase_done with:\n{\n  \"runId\": \"${run.id}\",\n  \"phase\": \"${run.phase}\",\n  \"summary\": \"...\",\n  \"outputs\": [\"path1\", \"path2\"]${run.phase === "ralphi-loop-iteration" ? ',\n  \"complete\": false' : ""}\n}\nDo not call the tool early.`;
+
+		if (run.phase === "ralphi-init" || run.phase === "ralphi-prd") {
+			toolHint += `\n\nThe ralphi_ask_user_question tool is available in this phase to ask the user structured questions with selectable options (single/multi-select). Use it to gather requirements interactively before generating output.`;
+		}
 
 		return {
 			systemPrompt: event.systemPrompt + "\n\n" + toolHint,
 		};
+	}
+
+	getActivePhaseForSession(ctx: RalphiContext): PhaseName | undefined {
+		this.restoreStateFromSession(ctx);
+		const key = this.sessionKey(ctx);
+		const runId = this.activePhaseBySession.get(key);
+		if (!runId) return undefined;
+		const run = this.phaseRuns.get(runId);
+		if (!run || run.status !== "running") return undefined;
+		return run.phase;
 	}
 
 	phaseKinds() {

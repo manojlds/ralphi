@@ -11,6 +11,9 @@ export const PHASE_KINDS: readonly PhaseName[] = [
 	"ralphi-loop-iteration",
 ] as const;
 
+/** Phases where the ralphi_ask_user_question tool is available. */
+export const ASK_TOOL_PHASES: readonly PhaseName[] = ["ralphi-init", "ralphi-prd"] as const;
+
 export interface PhaseRun {
 	id: string;
 	phase: PhaseName;
