@@ -73,6 +73,18 @@ export class RalphiRuntime {
 		});
 	}
 
+	private sendProgressMessage(text: string, details?: Record<string, unknown>) {
+		this.pi.sendMessage(
+			{
+				customType: "ralphi-progress",
+				content: text,
+				display: true,
+				details,
+			},
+			{ triggerTurn: false, deliverAs: "followUp" },
+		);
+	}
+
 	private snapshotState(): PersistedState {
 		return {
 			phaseRuns: [...this.phaseRuns.values()],
@@ -162,7 +174,9 @@ export class RalphiRuntime {
 		try {
 			const file = this.stateFile(cwd);
 			fs.mkdirSync(path.dirname(file), { recursive: true });
-			fs.writeFileSync(file, JSON.stringify(state, null, 2));
+			const tmp = `${file}.tmp.${process.pid}.${Math.random().toString(16).slice(2)}`;
+			fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
+			fs.renameSync(tmp, file);
 		} catch {
 			// best-effort mirror for cross-session visibility
 		}
@@ -445,6 +459,10 @@ export class RalphiRuntime {
 			outputs: run.outputs,
 			complete: run.complete ?? false,
 		});
+		this.sendProgressMessage(
+			`🔁 ${loop.id}: iteration ${loop.iteration}/${loop.maxIterations} finalized — ${run.summary ?? "(no summary)"}`,
+			{ loopId: loop.id, runId: run.id, iteration: loop.iteration },
+		);
 		this.persistState(ctx);
 
 		if (run.complete) {
@@ -453,6 +471,10 @@ export class RalphiRuntime {
 			this.updateLoopStatusLine(ctx);
 			this.appendRalphiEvent("loop_completed", { loopId: loop.id, iteration: loop.iteration });
 			this.persistState(ctx);
+			this.sendProgressMessage(
+				`✅ Loop ${loop.id} complete after ${loop.iteration} iteration(s).`,
+				{ loopId: loop.id, iteration: loop.iteration },
+			);
 			ctx.ui.notify(`Loop ${loop.id} complete after ${loop.iteration} iteration(s).`, "info");
 			return;
 		}
@@ -463,6 +485,10 @@ export class RalphiRuntime {
 			this.updateLoopStatusLine(ctx);
 			this.appendRalphiEvent("loop_stopped", { loopId: loop.id, iteration: loop.iteration });
 			this.persistState(ctx);
+			this.sendProgressMessage(
+				`🛑 Loop ${loop.id} stopped by user after iteration ${loop.iteration}.`,
+				{ loopId: loop.id, iteration: loop.iteration },
+			);
 			ctx.ui.notify(`Loop ${loop.id} stopped by user after iteration ${loop.iteration}.`, "info");
 			return;
 		}
@@ -477,6 +503,10 @@ export class RalphiRuntime {
 				maxIterations: loop.maxIterations,
 			});
 			this.persistState(ctx);
+			this.sendProgressMessage(
+				`⚠️ Loop ${loop.id} reached max iterations (${loop.maxIterations}).`,
+				{ loopId: loop.id, iteration: loop.iteration, maxIterations: loop.maxIterations },
+			);
 			ctx.ui.notify(`Loop ${loop.id} reached max iterations (${loop.maxIterations}).`, "warning");
 			return;
 		}
@@ -686,6 +716,11 @@ ${pendingStory ? `- Suggested next story from prd.json: ${pendingStory.id} - ${p
   - outputs: key files changed
   - complete: true only when all stories are done`;
 
+		const storyLabel = pendingStory ? ` — ${pendingStory.id}: ${pendingStory.title}` : "";
+		this.sendProgressMessage(
+			`🔁 ${loop.id}: starting iteration ${loop.iteration}/${loop.maxIterations}${storyLabel}`,
+			{ loopId: loop.id, runId, iteration: loop.iteration, storyId: pendingStory?.id },
+		);
 		ctx.ui.notify(`Loop ${loop.id}: starting iteration ${loop.iteration}/${loop.maxIterations}`, "info");
 		this.updateLoopStatusLine(ctx);
 		this.sendUserMessage(ctx, kickoff, "steer");

@@ -35,12 +35,14 @@ export type MockSessionManager = {
 
 export type MockExtensionApi = {
 	sendUserMessages: Array<{ text: string; options?: Record<string, unknown> }>;
+	sentMessages: Array<{ message: Record<string, unknown>; options?: Record<string, unknown> }>;
 	labels: Array<{ id: string; label: string }>;
 	sessionNames: string[];
 	registeredCommands: Map<string, unknown>;
 	registeredTools: unknown[];
 	registeredEvents: Map<string, unknown[]>;
 	sendUserMessage: (text: string, options?: Record<string, unknown>) => void;
+	sendMessage: (message: Record<string, unknown>, options?: Record<string, unknown>) => void;
 	appendEntry: (customType: string, data: Record<string, unknown>) => void;
 	setLabel: (id: string, label: string) => void;
 	setSessionName: (name: string) => void;
@@ -137,6 +139,7 @@ export function createMockUi(
 export function createMockExtensionApi(sessionManager: MockSessionManager): MockExtensionApi {
 	return {
 		sendUserMessages: [],
+		sentMessages: [],
 		labels: [],
 		sessionNames: [],
 		registeredCommands: new Map(),
@@ -144,6 +147,9 @@ export function createMockExtensionApi(sessionManager: MockSessionManager): Mock
 		registeredEvents: new Map(),
 		sendUserMessage(text, options) {
 			this.sendUserMessages.push({ text, options });
+		},
+		sendMessage(message, options) {
+			this.sentMessages.push({ message, options });
 		},
 		appendEntry(customType, data) {
 			sessionManager.appendCustom(customType, data);

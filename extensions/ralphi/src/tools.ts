@@ -17,12 +17,21 @@ export function registerTools(pi: ExtensionAPI, runtime: RalphiRuntime) {
 			complete: Type.Optional(Type.Boolean({ description: "Set true when loop work is fully complete" })),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const result = await runtime.markPhaseDone(ctx, params);
-			return {
-				content: [{ type: "text", text: result.text }],
-				details: {},
-				isError: !result.ok,
-			};
+			try {
+				const result = await runtime.markPhaseDone(ctx, params);
+				return {
+					content: [{ type: "text", text: result.text }],
+					details: {},
+					isError: !result.ok,
+				};
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				return {
+					content: [{ type: "text", text: `Internal error in ralphi_phase_done: ${message}` }],
+					details: {},
+					isError: true,
+				};
+			}
 		},
 	});
 }
