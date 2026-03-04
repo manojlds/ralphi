@@ -812,11 +812,51 @@ ${pendingStory ? `- Suggested next story from prd.json: ${pendingStory.id} - ${p
 		ctx.ui.notify(lines.join("\n"), "info");
 	}
 
+	private runningLoopIterationRuns(): PhaseRun[] {
+		return [...this.phaseRuns.values()].filter((run) => run.phase === "ralphi-loop-iteration" && run.status === "running");
+	}
+
+	private resolveLoopIterationRunAlias(requested: string): PhaseRun | undefined {
+		const requestedId = requested.trim();
+		const running = this.runningLoopIterationRuns();
+		if (running.length === 0) return undefined;
+
+		const byLoopId = running.filter((run) => run.loopId === requestedId);
+		if (byLoopId.length === 1) return byLoopId[0];
+		if (byLoopId.length > 1) {
+			return byLoopId.sort((a, b) => a.createdAt.localeCompare(b.createdAt)).at(-1);
+		}
+
+		if (running.length === 1) return running[0];
+		return undefined;
+	}
+
+	private runNotFoundMessage(params: PhaseDoneInput): string {
+		if (params.phase !== "ralphi-loop-iteration") {
+			return `Run not found: ${params.runId}`;
+		}
+
+		const running = this.runningLoopIterationRuns();
+		if (running.length === 0) {
+			return `Run not found: ${params.runId}. No running loop iteration found. Use the iteration runId from the loop kickoff message.`;
+		}
+		if (running.length === 1) {
+			const only = running[0];
+			return `Run not found: ${params.runId}. For this loop iteration, use runId '${only.id}'${only.loopId ? ` (loopId: ${only.loopId})` : ""}.`;
+		}
+
+		const options = running.map((run) => `${run.id}${run.loopId ? ` (loopId: ${run.loopId})` : ""}`);
+		return `Run not found: ${params.runId}. Active loop iteration runIds: ${options.join(", ")}.`;
+	}
+
 	async markPhaseDone(ctx: ExtensionContext, params: PhaseDoneInput): Promise<{ ok: boolean; text: string }> {
 		this.restoreStateFromSession(ctx);
-		const run = this.phaseRuns.get(params.runId);
+		let run = this.phaseRuns.get(params.runId);
+		if (!run && params.phase === "ralphi-loop-iteration") {
+			run = this.resolveLoopIterationRunAlias(params.runId);
+		}
 		if (!run) {
-			return { ok: false, text: `Run not found: ${params.runId}` };
+			return { ok: false, text: this.runNotFoundMessage(params) };
 		}
 
 		if (run.phase !== params.phase) {

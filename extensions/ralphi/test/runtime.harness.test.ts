@@ -62,6 +62,38 @@ describe("ralphi extension unit-test harness", () => {
 		}
 	});
 
+	it("accepts loopId alias when marking loop iteration done", async () => {
+		const sessionManager = createMockSessionManager();
+		const api = createMockExtensionApi(sessionManager);
+		const runtime = new RalphiRuntime(api as any);
+		const ctx = createMockCommandContext({ sessionManager, cwd: "/tmp/ralphi-project" });
+
+		await runtime.startLoop(ctx as any, "--max-iterations 2");
+		const loopId = api.sendUserMessages
+			.find((m) => m.text.startsWith("/ralphi-loop-next "))!
+			.text.replace("/ralphi-loop-next ", "")
+			.trim();
+
+		await runtime.runLoopIteration(ctx as any, loopId);
+		const kickoff = api.sendUserMessages[api.sendUserMessages.length - 1].text;
+		const runIdMatch = kickoff.match(/runId: "([^"]+)"/);
+		expect(runIdMatch).toBeTruthy();
+		const actualRunId = runIdMatch![1];
+
+		const done = await runtime.markPhaseDone(ctx as any, {
+			runId: loopId,
+			phase: "ralphi-loop-iteration",
+			summary: "done via loop alias",
+			complete: false,
+			outputs: [],
+		});
+		expect(done.ok).toBe(true);
+		expect(done.text).toContain("Recorded completion for ralphi-loop-iteration");
+
+		await runtime.finalizeRun(ctx as any, actualRunId);
+		expect(api.sendUserMessages[api.sendUserMessages.length - 1].text).toBe(`/ralphi-loop-next ${loopId}`);
+	});
+
 	it("auto-finalizes queued runs on turn_end instead of sending /ralphi-finalize as plain text", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-project-"));
 		try {
