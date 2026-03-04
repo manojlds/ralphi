@@ -61,3 +61,20 @@ Session: N/A
   - Validation functions should return discriminated unions (`{ valid: true, answers } | { valid: false, errors }`) for type-safe branching
   - When adding optional parameters to existing schemas, all existing tests continue to pass since the param is optional
 ---
+
+## 2026-03-04T20:10:00Z - US-004
+Session: N/A
+- Added PRD-specific kickoff guidance in `startPhase` method — when phase is `ralphi-prd`, the kickoff message now includes explicit guidance to use `ralphi_ask_user_question` for 3-5 clarifying questions before generating the PRD, and confirms that name/description have already been collected
+- Enhanced `handleBeforeAgentStart` system prompt for `ralphi-prd` — adds PRD-specific paragraph encouraging structured Q&A about scope, goals, technical constraints, and success criteria before PRD generation
+- Updated `skills/ralphi-prd/SKILL.md` — Step 1 (Clarifying Questions) now has two subsections: "Using the Interactive Ask Tool (Preferred)" with JSON example, and "Fallback: Text-Based Questions" for when the tool is unavailable
+- Existing `/ralphi-prd` name/description collection in `commands.ts` was NOT modified — the flow remains fully intact
+- Convert and loop phases verified unaffected via dedicated tests
+- Files changed:
+  - `extensions/ralphi/src/runtime.ts` (PRD-specific kickoff guidance + system prompt enhancement)
+  - `skills/ralphi-prd/SKILL.md` (interactive ask tool section + text-based fallback)
+  - `extensions/ralphi/test/prd-command-flow.test.ts` (new — 15 unit tests)
+- **Learnings for future iterations:**
+  - Phase-specific kickoff customization pattern: use conditional string appending in `startPhase` based on the phase name
+  - System prompt layering: generic tool hints first (for init+prd), then phase-specific guidance on top (for prd only)
+  - Skill files can reference tools by name — the agent will pick up the hint from both the skill and the system prompt injection
+---

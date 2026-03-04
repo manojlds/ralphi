@@ -59,8 +59,8 @@
         "Tests/typecheck/lint passes."
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added PRD-specific kickoff guidance in startPhase with ask tool encouragement, enhanced handleBeforeAgentStart system prompt with PRD-specific Q&A guidance, updated ralphi-prd skill to reference ralphi_ask_user_question as preferred interactive method with text-based fallback. 15 new unit tests."
     }
   ]
 }
