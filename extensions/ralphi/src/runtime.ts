@@ -8,6 +8,7 @@ import type {
 	ExtensionContext,
 } from "@mariozechner/pi-coding-agent";
 import { parseMaxIterations, renderOutputs } from "./helpers";
+import { buildDeterministicSummary } from "./summary";
 import {
 	type LoopRun,
 	PHASE_KINDS,
@@ -45,6 +46,7 @@ export class RalphiRuntime {
 	private readonly commandContextByRun = new Map<string, ExtensionCommandContext>();
 	private readonly pendingFinalizeRuns = new Set<string>();
 	private _suppressEventRestore = false;
+	private currentlyFinalizingRun: PhaseRun | null = null;
 
 	constructor(private readonly pi: ExtensionAPI) {}
 
@@ -394,12 +396,17 @@ export class RalphiRuntime {
 		}
 
 		if (run.checkpointLeafId) {
-			const treeResult = await ctx.navigateTree(run.checkpointLeafId, {
-				summarize: true,
-				label: `ralphi:${run.phase}:summary:${run.id}`,
-			});
-			if (treeResult.cancelled) {
-				ctx.ui.notify("Tree navigation was cancelled; phase remains finalized but context was not rewound.", "warning");
+			this.currentlyFinalizingRun = run;
+			try {
+				const treeResult = await ctx.navigateTree(run.checkpointLeafId, {
+					summarize: true,
+					label: `ralphi:${run.phase}:summary:${run.id}`,
+				});
+				if (treeResult.cancelled) {
+					ctx.ui.notify("Tree navigation was cancelled; phase remains finalized but context was not rewound.", "warning");
+				}
+			} finally {
+				this.currentlyFinalizingRun = null;
 			}
 		} else {
 			ctx.ui.notify("No checkpoint leaf was available to rewind to.", "warning");
@@ -1003,6 +1010,20 @@ Loop context:
 
 	handleSessionSwitch(ctx: ExtensionContext) {
 		if (!this._suppressEventRestore) this.restoreStateFromSession(ctx);
+	}
+
+	handleBeforeTree(event: { preparation: { targetId: string } }): { summary: { summary: string; details: unknown } } | undefined {
+		if (!this.currentlyFinalizingRun) return undefined;
+		if (this.currentlyFinalizingRun.checkpointLeafId !== event.preparation.targetId) return undefined;
+
+		const summary = buildDeterministicSummary(this.currentlyFinalizingRun);
+		if (!summary) return undefined;
+		return {
+			summary: {
+				summary,
+				details: { phase: this.currentlyFinalizingRun.phase, runId: this.currentlyFinalizingRun.id },
+			},
+		};
 	}
 
 	handleBeforeAgentStart(event: BeforeAgentStartEvent, ctx: ExtensionContext): { systemPrompt: string } | void {

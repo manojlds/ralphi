@@ -17,4 +17,8 @@ export function registerEvents(pi: ExtensionAPI, runtime: RalphiRuntime) {
 	pi.on("turn_end", async (_event, ctx) => {
 		await runtime.handleTurnEnd(ctx);
 	});
+
+	pi.on("session_before_tree", (event) => {
+		return runtime.handleBeforeTree(event);
+	});
 }
