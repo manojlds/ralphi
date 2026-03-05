@@ -9,6 +9,7 @@
 - Skill-contract testing pattern: for prompt/skill-only behavior changes, add unit tests that read the relevant `skills/**/SKILL.md` file and assert required protocol markers/format fields to prevent accidental prompt regressions
 - Project-local loop guidance pattern: store iteration preferences at `.ralphi/loop-guidance.md`, manage via `/ralphi-loop-guidance-*` commands, and inject only from `handleBeforeAgentStart` when phase is `ralphi-loop-iteration`
 - Optional advanced loop controls pattern: use additive front matter in `.ralphi/loop-guidance.md` (`reviewPasses`, `trajectoryGuard`) so stricter gates are opt-in while default behavior remains unchanged
+- Rollout-safety documentation pattern: capture phase sequencing + go/no-go + rollback policy in `tasks/*.md` and guard it with markdown contract tests under `extensions/ralphi/test`.
 ---
 
 ## 2026-03-04T19:30:00Z - US-001
@@ -150,4 +151,27 @@ Corrective Plan: N/A
 - **Learnings for future iterations:**
   - Front-matter-backed controls in existing `.ralphi/*.md` files provide a low-friction path for opt-in strictness without introducing new required config files
   - Keep stricter loop controls additive and enforce them only at `markPhaseDone` time so iteration startup/default flow remains lightweight
+---
+
+## 2026-03-05T22:28:50Z - US-004
+Session: N/A
+Review Outcome: PASS
+Trajectory: ON_TRACK
+Trajectory Notes: N/A
+Corrective Plan: N/A
+- Documented strict phase sequencing gates with explicit go/no-go criteria and rollback expectations in `tasks/prd-three-phase-loop-guidance-and-step-back-review.md`
+- Added release notes and migration notes for externally visible loop guidance/review behavior changes in both PRD docs and `README.md`
+- Added markdown contract tests to enforce rollout sequencing and release-safety documentation expectations
+- Updated project guidance and tracking artifacts to reflect this reusable rollout-safety pattern
+- Ran `npm run check` (lint + typecheck + unit tests): all pass
+- Files changed:
+  - `tasks/prd-three-phase-loop-guidance-and-step-back-review.md`
+  - `extensions/ralphi/test/sequential-rollout-release-safety.test.ts`
+  - `README.md`
+  - `AGENTS.md`
+  - `prd.json`
+  - `progress.txt`
+- **Learnings for future iterations:**
+  - For governance/process stories, keep rollout policy docs versioned in-repo and protect critical wording with markdown contract tests
+  - Pair release notes and migration notes in both implementation PRD docs and public README so maintainers and users get aligned guidance
 ---

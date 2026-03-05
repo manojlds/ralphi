@@ -32,6 +32,7 @@ Individual commands:
 - Follow existing runtime/tool contract patterns (`ralphi_phase_done`, loop lifecycle handling).
 - Keep project-local loop preferences in `.ralphi/*` files (for example `.ralphi/loop-guidance.md`) and load them lazily from runtime paths so non-loop phases remain unaffected.
 - For optional loop controls, use additive front matter in `.ralphi/loop-guidance.md` (`reviewPasses`, `trajectoryGuard`) so defaults stay lightweight and backward compatible.
+- For rollout/release-safety stories, keep policy in project docs (`tasks/*.md`, `README.md`) and add markdown contract tests so sequencing/go-no-go/rollback guidance does not regress silently.
 
 ## Directory Structure
 

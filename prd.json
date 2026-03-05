@@ -64,8 +64,8 @@
         "Tests, typecheck, and lint pass."
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Documented strict phase sequencing with explicit go/no-go/rollback gates in tasks/prd-three-phase-loop-guidance-and-step-back-review.md, added release+migration notes to both PRD docs and README.md, and added markdown contract tests to prevent rollout-safety guidance regressions."
     }
   ]
 }

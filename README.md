@@ -97,6 +97,19 @@ Prefer small, scoped changes per iteration.
 - `reviewPasses` defaults to `1` when omitted
 - `trajectoryGuard` supports `off` (default), `warn_on_drift`, or `require_corrective_plan`
 
+## Release notes (three-phase loop guidance rollout)
+
+- Phase 1 introduced a required loop step-back review protocol and trajectory logging format in `skills/ralphi-loop/SKILL.md`.
+- Phase 2 introduced project-local loop guidance in `.ralphi/loop-guidance.md` and guidance management commands.
+- Phase 3 introduced optional strict loop review controls via `.ralphi/loop-guidance.md` front matter and additive loop metadata fields in `ralphi_phase_done`.
+
+## Migration notes
+
+- No breaking migration is required; existing loop workflows continue to work without changes.
+- To adopt guidance, create `.ralphi/loop-guidance.md` with plain-text preferences.
+- To adopt strict controls, add front matter gradually (`reviewPasses`, `trajectoryGuard`) and keep defaults for lightweight behavior.
+- To roll back strictness quickly, remove front matter keys and keep only the guidance body text.
+
 ## CLI
 
 `ralphi` ships a small CLI for project-local quality checks:
