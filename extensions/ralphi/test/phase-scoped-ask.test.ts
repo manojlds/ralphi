@@ -3,7 +3,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 import { RalphiRuntime } from "../src/runtime";
-import { ASK_TOOL_PHASES } from "../src/types";
 import {
 	createMockCommandContext,
 	createMockExtensionApi,
@@ -21,17 +20,7 @@ function createTempDir(): string {
 	return fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-phase-scoped-"));
 }
 
-describe("US-002: Phase-Scoped Availability (Init + PRD)", () => {
-	describe("ASK_TOOL_PHASES constant", () => {
-		it("includes ralphi-init and ralphi-prd only", () => {
-			expect(ASK_TOOL_PHASES).toContain("ralphi-init");
-			expect(ASK_TOOL_PHASES).toContain("ralphi-prd");
-			expect(ASK_TOOL_PHASES).not.toContain("ralphi-convert");
-			expect(ASK_TOOL_PHASES).not.toContain("ralphi-loop-iteration");
-			expect(ASK_TOOL_PHASES).toHaveLength(2);
-		});
-	});
-
+describe("ask tool availability and phase introspection", () => {
 	describe("getActivePhaseForSession", () => {
 		it("returns the active phase when a phase is running", async () => {
 			const tempDir = createTempDir();
@@ -108,69 +97,8 @@ describe("US-002: Phase-Scoped Availability (Init + PRD)", () => {
 		});
 	});
 
-	describe("ask tool phase enforcement via registerTools", () => {
-		it("rejects ralphi_ask_user_question when called during ralphi-convert", async () => {
-			const tempDir = createTempDir();
-			try {
-				const sessionManager = createMockSessionManager();
-				const api = createMockExtensionApi(sessionManager);
-				const runtime = new RalphiRuntime(api as any);
-
-				const { registerTools } = await import("../src/tools");
-				registerTools(api as any, runtime);
-
-				const askTool = api.registeredTools.find((t: any) => t.name === "ralphi_ask_user_question") as any;
-				expect(askTool).toBeDefined();
-
-				const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
-				await runtime.startPhase(ctx as any, "ralphi-convert", "my-prd.md");
-
-				const result = await askTool.execute(
-					"call-1",
-					{ questions: [{ id: "q1", prompt: "Pick one", type: "single", options: ["A", "B"] }] },
-					new AbortController().signal,
-					() => {},
-					ctx as any,
-				);
-
-				expect(result.isError).toBe(true);
-				expect(result.content[0].text).toContain("only available during ralphi-init and ralphi-prd");
-				expect(result.content[0].text).toContain("current phase: ralphi-convert");
-			} finally {
-				fs.rmSync(tempDir, { recursive: true, force: true });
-			}
-		});
-
-		it("rejects ralphi_ask_user_question when no phase is active", async () => {
-			const tempDir = createTempDir();
-			try {
-				const sessionManager = createMockSessionManager();
-				const api = createMockExtensionApi(sessionManager);
-				const runtime = new RalphiRuntime(api as any);
-
-				const { registerTools } = await import("../src/tools");
-				registerTools(api as any, runtime);
-
-				const askTool = api.registeredTools.find((t: any) => t.name === "ralphi_ask_user_question") as any;
-				const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
-
-				const result = await askTool.execute(
-					"call-1",
-					{ questions: [{ id: "q1", prompt: "Pick one", type: "single", options: ["A", "B"] }] },
-					new AbortController().signal,
-					() => {},
-					ctx as any,
-				);
-
-				expect(result.isError).toBe(true);
-				expect(result.content[0].text).toContain("only available during ralphi-init and ralphi-prd");
-				expect(result.content[0].text).toContain("no active ralphi phase");
-			} finally {
-				fs.rmSync(tempDir, { recursive: true, force: true });
-			}
-		});
-
-		it("allows ralphi_ask_user_question during ralphi-init", async () => {
+	describe("ask tool works in any phase via registerTools", () => {
+		it("works during ralphi-init", async () => {
 			const tempDir = createTempDir();
 			try {
 				const sessionManager = createMockSessionManager();
@@ -201,7 +129,7 @@ describe("US-002: Phase-Scoped Availability (Init + PRD)", () => {
 			}
 		});
 
-		it("allows ralphi_ask_user_question during ralphi-prd", async () => {
+		it("works during ralphi-prd", async () => {
 			const tempDir = createTempDir();
 			try {
 				const sessionManager = createMockSessionManager();
@@ -232,7 +160,7 @@ describe("US-002: Phase-Scoped Availability (Init + PRD)", () => {
 			}
 		});
 
-		it("rejects ralphi_ask_user_question during ralphi-loop-iteration", async () => {
+		it("works during ralphi-convert", async () => {
 			const tempDir = createTempDir();
 			try {
 				const sessionManager = createMockSessionManager();
@@ -244,20 +172,81 @@ describe("US-002: Phase-Scoped Availability (Init + PRD)", () => {
 
 				const askTool = api.registeredTools.find((t: any) => t.name === "ralphi_ask_user_question") as any;
 
-				const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
-				await runtime.startLoop(ctx as any, "--max-iterations 3");
+				const ui = createMockUi([], [], ["JSON"]);
+				const ctx = createMockCommandContext({ sessionManager, cwd: tempDir, ui });
+				await runtime.startPhase(ctx as any, "ralphi-convert", "my-prd.md");
 
 				const result = await askTool.execute(
 					"call-1",
-					{ questions: [{ id: "q1", prompt: "Pick one", type: "single", options: ["A", "B"] }] },
+					{ questions: [{ id: "format", prompt: "Output format?", type: "single", options: ["JSON", "YAML"] }] },
 					new AbortController().signal,
 					() => {},
 					ctx as any,
 				);
 
-				expect(result.isError).toBe(true);
-				expect(result.content[0].text).toContain("only available during ralphi-init and ralphi-prd");
-				expect(result.content[0].text).toContain("current phase: ralphi-loop-iteration");
+				expect(result.isError).toBe(false);
+				expect(result.details.answers.format.selected).toEqual(["JSON"]);
+			} finally {
+				fs.rmSync(tempDir, { recursive: true, force: true });
+			}
+		});
+
+		it("works during ralphi-loop-iteration", async () => {
+			const tempDir = createTempDir();
+			try {
+				const sessionManager = createMockSessionManager();
+				const api = createMockExtensionApi(sessionManager);
+				const runtime = new RalphiRuntime(api as any);
+
+				const { registerTools } = await import("../src/tools");
+				registerTools(api as any, runtime);
+
+				const askTool = api.registeredTools.find((t: any) => t.name === "ralphi_ask_user_question") as any;
+
+				const ui = createMockUi([], [], ["Yes"]);
+				const ctx = createMockCommandContext({ sessionManager, cwd: tempDir, ui });
+				await runtime.startLoop(ctx as any, "--max-iterations 3");
+
+				const result = await askTool.execute(
+					"call-1",
+					{ questions: [{ id: "confirm", prompt: "Proceed?", type: "single", options: ["Yes", "No"] }] },
+					new AbortController().signal,
+					() => {},
+					ctx as any,
+				);
+
+				expect(result.isError).toBe(false);
+				expect(result.details.answers.confirm.selected).toEqual(["Yes"]);
+			} finally {
+				fs.rmSync(tempDir, { recursive: true, force: true });
+			}
+		});
+
+		it("works with no active phase", async () => {
+			const tempDir = createTempDir();
+			try {
+				const sessionManager = createMockSessionManager();
+				const api = createMockExtensionApi(sessionManager);
+				const runtime = new RalphiRuntime(api as any);
+
+				const { registerTools } = await import("../src/tools");
+				registerTools(api as any, runtime);
+
+				const askTool = api.registeredTools.find((t: any) => t.name === "ralphi_ask_user_question") as any;
+
+				const ui = createMockUi([], [], ["Blue"]);
+				const ctx = createMockCommandContext({ sessionManager, cwd: tempDir, ui });
+
+				const result = await askTool.execute(
+					"call-1",
+					{ questions: [{ id: "color", prompt: "Favorite color?", type: "single", options: ["Blue", "Red"] }] },
+					new AbortController().signal,
+					() => {},
+					ctx as any,
+				);
+
+				expect(result.isError).toBe(false);
+				expect(result.details.answers.color.selected).toEqual(["Blue"]);
 			} finally {
 				fs.rmSync(tempDir, { recursive: true, force: true });
 			}
@@ -265,7 +254,7 @@ describe("US-002: Phase-Scoped Availability (Init + PRD)", () => {
 	});
 
 	describe("system prompt guidance in handleBeforeAgentStart", () => {
-		it("includes ask tool guidance for ralphi-init phase", async () => {
+		it("includes ask tool guidance for all phases", async () => {
 			const tempDir = createTempDir();
 			try {
 				const sessionManager = createMockSessionManager();
@@ -279,34 +268,14 @@ describe("US-002: Phase-Scoped Availability (Init + PRD)", () => {
 				const result = runtime.handleBeforeAgentStart(event, ctx as any);
 
 				expect(result).toBeDefined();
-				expect(result!.systemPrompt).toContain("ralphi_ask_user_question tool is available in this phase");
+				expect(result!.systemPrompt).toContain("ralphi_ask_user_question");
 				expect(result!.systemPrompt).toContain("structured questions");
 			} finally {
 				fs.rmSync(tempDir, { recursive: true, force: true });
 			}
 		});
 
-		it("includes ask tool guidance for ralphi-prd phase", async () => {
-			const tempDir = createTempDir();
-			try {
-				const sessionManager = createMockSessionManager();
-				const api = createMockExtensionApi(sessionManager);
-				const runtime = new RalphiRuntime(api as any);
-				const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
-
-				await runtime.startPhase(ctx as any, "ralphi-prd", "my-feature a great feature");
-
-				const event = { systemPrompt: "You are a helpful assistant." } as any;
-				const result = runtime.handleBeforeAgentStart(event, ctx as any);
-
-				expect(result).toBeDefined();
-				expect(result!.systemPrompt).toContain("ralphi_ask_user_question tool is available in this phase");
-			} finally {
-				fs.rmSync(tempDir, { recursive: true, force: true });
-			}
-		});
-
-		it("does NOT include ask tool guidance for ralphi-convert phase", async () => {
+		it("includes ask tool guidance for ralphi-convert phase", async () => {
 			const tempDir = createTempDir();
 			try {
 				const sessionManager = createMockSessionManager();
@@ -320,13 +289,13 @@ describe("US-002: Phase-Scoped Availability (Init + PRD)", () => {
 				const result = runtime.handleBeforeAgentStart(event, ctx as any);
 
 				expect(result).toBeDefined();
-				expect(result!.systemPrompt).not.toContain("ralphi_ask_user_question");
+				expect(result!.systemPrompt).toContain("ralphi_ask_user_question");
 			} finally {
 				fs.rmSync(tempDir, { recursive: true, force: true });
 			}
 		});
 
-		it("does NOT include ask tool guidance for ralphi-loop-iteration phase", async () => {
+		it("includes extra PRD-specific guidance for ralphi-prd phase", async () => {
 			const tempDir = createTempDir();
 			try {
 				const sessionManager = createMockSessionManager();
@@ -334,13 +303,15 @@ describe("US-002: Phase-Scoped Availability (Init + PRD)", () => {
 				const runtime = new RalphiRuntime(api as any);
 				const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
 
-				await runtime.startLoop(ctx as any, "--max-iterations 3");
+				await runtime.startPhase(ctx as any, "ralphi-prd", "my-feature a great feature");
 
 				const event = { systemPrompt: "You are a helpful assistant." } as any;
 				const result = runtime.handleBeforeAgentStart(event, ctx as any);
 
 				expect(result).toBeDefined();
-				expect(result!.systemPrompt).not.toContain("ralphi_ask_user_question");
+				expect(result!.systemPrompt).toContain("ralphi_ask_user_question");
+				expect(result!.systemPrompt).toContain("For ralphi-prd");
+				expect(result!.systemPrompt).toContain("clarifying questions");
 			} finally {
 				fs.rmSync(tempDir, { recursive: true, force: true });
 			}
@@ -417,21 +388,6 @@ describe("US-002: Phase-Scoped Availability (Init + PRD)", () => {
 			} finally {
 				fs.rmSync(tempDir, { recursive: true, force: true });
 			}
-		});
-	});
-
-	describe("tool description documents phase restriction", () => {
-		it("tool description mentions phase restriction", async () => {
-			const sessionManager = createMockSessionManager();
-			const api = createMockExtensionApi(sessionManager);
-			const runtime = new RalphiRuntime(api as any);
-
-			const { registerTools } = await import("../src/tools");
-			registerTools(api as any, runtime);
-
-			const askTool = api.registeredTools.find((t: any) => t.name === "ralphi_ask_user_question") as any;
-			expect(askTool.description).toContain("ralphi-init");
-			expect(askTool.description).toContain("ralphi-prd");
 		});
 	});
 });

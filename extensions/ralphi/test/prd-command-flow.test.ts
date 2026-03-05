@@ -257,7 +257,7 @@ describe("US-004: PRD-Focused Command Flow Compatibility", () => {
 			}
 		});
 
-		it("ralphi-convert system prompt has no ask tool guidance at all", async () => {
+		it("ralphi-convert system prompt includes ask tool guidance but not PRD-specific guidance", async () => {
 			const tempDir = createTempDir();
 			try {
 				const sessionManager = createMockSessionManager();
@@ -271,7 +271,8 @@ describe("US-004: PRD-Focused Command Flow Compatibility", () => {
 				const result = runtime.handleBeforeAgentStart(event, ctx as any);
 
 				expect(result).toBeDefined();
-				expect(result!.systemPrompt).not.toContain("ralphi_ask_user_question");
+				expect(result!.systemPrompt).toContain("ralphi_ask_user_question");
+				expect(result!.systemPrompt).not.toContain("For ralphi-prd");
 			} finally {
 				fs.rmSync(tempDir, { recursive: true, force: true });
 			}

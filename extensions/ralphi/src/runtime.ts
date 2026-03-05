@@ -1027,9 +1027,7 @@ ${pendingStory ? `- Suggested next story from prd.json: ${pendingStory.id} - ${p
 
 		let toolHint = `\n[RALPHI PHASE]\nYou are executing ${run.phase} (runId=${run.id}).\nContinue collaborating with the user until this phase is complete.\nWhen complete, call tool ralphi_phase_done with:\n{\n  \"runId\": \"${run.id}\",\n  \"phase\": \"${run.phase}\",\n  \"summary\": \"...\",\n  \"outputs\": [\"path1\", \"path2\"]${run.phase === "ralphi-loop-iteration" ? ',\n  \"complete\": false' : ""}\n}\nDo not call the tool early.`;
 
-		if (run.phase === "ralphi-init" || run.phase === "ralphi-prd") {
-			toolHint += `\n\nThe ralphi_ask_user_question tool is available in this phase to ask the user structured questions with selectable options (single/multi-select). Use it to gather requirements interactively before generating output.`;
-		}
+		toolHint += `\n\nThe ralphi_ask_user_question tool is available to ask the user structured questions with selectable options (single/multi-select). Use it to gather requirements or clarifications interactively.`;
 
 		if (run.phase === "ralphi-prd") {
 			toolHint += `\n\nFor ralphi-prd: The feature name and description have already been collected via the /ralphi-prd command. Use ralphi_ask_user_question to ask 3-5 essential clarifying questions about scope, goals, technical constraints, and success criteria before generating the PRD. Structure each question with concrete, meaningful options to guide the user. Only proceed to PRD generation after receiving answers.`;
