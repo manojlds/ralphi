@@ -38,6 +38,10 @@
       "skills/ralphi-loop/SKILL.md"
     ]
   },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "peerDependencies": {
     "@mariozechner/pi-ai": "*",
     "@mariozechner/pi-coding-agent": "*",
