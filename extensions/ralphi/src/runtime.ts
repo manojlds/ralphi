@@ -1009,7 +1009,34 @@ Loop context:
 
 			const commandCtx = this.commandContextByRun.get(runId);
 			if (!commandCtx) {
-				if (ctx.hasUI) {
+				// No CommandContext available (e.g., lost after restart).
+				// Fall back to branchWithSummary — synchronous, no events,
+				// but still collapses the branch with a deterministic summary.
+				const sm = ctx.sessionManager as { branchWithSummary?: (id: string | null, summary: string, details?: unknown, fromHook?: boolean) => string };
+				if (run.checkpointLeafId && typeof sm.branchWithSummary === "function") {
+					const summary = buildDeterministicSummary(run) ?? run.summary ?? `Phase ${run.phase} completed.`;
+					sm.branchWithSummary(
+						run.checkpointLeafId,
+						summary,
+						{ runId: run.id, phase: run.phase, fallback: true },
+						true, // fromHook — marks as extension-generated
+					);
+					run.status = "completed";
+					this.appendRalphiEvent("phase_finalized", {
+						runId: run.id,
+						phase: run.phase,
+						summary: run.summary,
+						outputs: run.outputs,
+						fallback: true,
+					});
+					this.persistState(ctx);
+					if (ctx.hasUI) {
+						ctx.ui.notify(
+							`Finalized ${run.phase} (${run.id}) via fallback — command context was unavailable.`,
+							"info",
+						);
+					}
+				} else if (ctx.hasUI) {
 					ctx.ui.setEditorText(`/ralphi-finalize ${runId}`);
 					ctx.ui.notify(
 						`Run ${runId} is awaiting finalize. Press Enter to run /ralphi-finalize ${runId}.`,

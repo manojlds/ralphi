@@ -10,6 +10,7 @@ export type MockCustomEntry = {
 export type MockUi = {
 	notifications: Array<{ message: string; level: NotifyLevel }>;
 	statuses: Array<{ key: string; text: string | undefined }>;
+	editorTexts: string[];
 	confirmCalls: Array<{ title: string; message: string }>;
 	confirmResponses: boolean[];
 	selectCalls: Array<{ title: string; options: string[] }>;
@@ -18,6 +19,7 @@ export type MockUi = {
 	inputResponses: Array<string | undefined>;
 	notify: (message: string, level: NotifyLevel) => void;
 	setStatus: (key: string, text: string | undefined) => void;
+	setEditorText: (text: string) => void;
 	confirm: (title: string, message: string) => Promise<boolean>;
 	select: (title: string, options: string[]) => Promise<string | undefined>;
 	input: (title: string, placeholder?: string) => Promise<string | undefined>;
@@ -31,6 +33,8 @@ export type MockSessionManager = {
 	getBranch: () => MockCustomEntry[];
 	switchTo: (sessionFile: string) => void;
 	appendCustom: (customType: string, data: Record<string, unknown>) => MockCustomEntry;
+	branchWithSummary: (branchFromId: string | null, summary: string, details?: unknown, fromHook?: boolean) => string;
+	branchWithSummaryCalls: Array<{ branchFromId: string | null; summary: string; details?: unknown; fromHook?: boolean }>;
 };
 
 export type MockExtensionApi = {
@@ -98,6 +102,21 @@ export function createMockSessionManager(initialSessionFile = "session-controlle
 			ensureSession(currentSessionFile).push(entry);
 			return entry;
 		},
+		branchWithSummaryCalls: [] as Array<{ branchFromId: string | null; summary: string; details?: unknown; fromHook?: boolean }>,
+		branchWithSummary: function (branchFromId: string | null, summary: string, details?: unknown, fromHook?: boolean): string {
+			this.branchWithSummaryCalls.push({ branchFromId, summary, details, fromHook });
+			const entry: MockCustomEntry = {
+				id: nextEntryId(),
+				type: "branch_summary" as any,
+				customType: "branch_summary",
+				summary,
+				fromId: branchFromId,
+				details,
+				fromHook,
+			};
+			ensureSession(currentSessionFile).push(entry);
+			return entry.id;
+		},
 	};
 }
 
@@ -109,6 +128,7 @@ export function createMockUi(
 	return {
 		notifications: [],
 		statuses: [],
+		editorTexts: [],
 		confirmCalls: [],
 		confirmResponses: [...confirmResponses],
 		selectCalls: [],
@@ -120,6 +140,9 @@ export function createMockUi(
 		},
 		setStatus(key, text) {
 			this.statuses.push({ key, text });
+		},
+		setEditorText(text) {
+			this.editorTexts.push(text);
 		},
 		async confirm(title, message) {
 			this.confirmCalls.push({ title, message });

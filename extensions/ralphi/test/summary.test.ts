@@ -1178,3 +1178,270 @@ describe("__ralphiCollapseInProgress flag", () => {
 		expect(globalThis.__ralphiCollapseInProgress).toBe(false);
 	});
 });
+
+// ---- branchWithSummary fallback ----
+
+describe("branchWithSummary fallback when commandContext is missing", () => {
+	let tempDir: string;
+
+	beforeEach(() => {
+		tempDir = makeTempDir();
+	});
+
+	afterEach(() => {
+		fs.rmSync(tempDir, { recursive: true, force: true });
+	});
+
+	function extractRunId(messages: Array<{ text: string }>): string {
+		const kickoff = messages.find((m) => m.text.includes("runId:"));
+		const match = kickoff?.text.match(/runId:\s*"?([^"\s\n]+)"?/);
+		if (!match) throw new Error("runId not found in messages");
+		return match[1];
+	}
+
+	it("uses branchWithSummary when commandContext is unavailable", async () => {
+		// Phase 1: start + mark done with runtime A (has commandContext)
+		const sessionManager = createMockSessionManager();
+		const api1 = createMockExtensionApi(sessionManager);
+		const runtime1 = new RalphiRuntime(api1 as any);
+		const ctx1 = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+		await runtime1.startPhase(ctx1 as any, "ralphi-init", "");
+		const runId = extractRunId(api1.sendUserMessages);
+
+		await runtime1.markPhaseDone(ctx1 as any, {
+			runId,
+			phase: "ralphi-init",
+			summary: "Initialized project",
+			outputs: [".ralphi/config.yaml"],
+		});
+
+		// Phase 2: simulate restart — new runtime loads persisted state
+		// but has no commandContextByRun entries
+		const api2 = createMockExtensionApi(sessionManager);
+		const runtime2 = new RalphiRuntime(api2 as any);
+
+		// Manually add the runId to pendingFinalizeRuns (simulating what
+		// would happen if state was restored from disk with awaiting_finalize)
+		(runtime2 as any).pendingFinalizeRuns.add(runId);
+
+		// Create a turn_end context (ExtensionContext, not CommandContext)
+		const turnEndCtx = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+		await runtime2.handleTurnEnd(turnEndCtx as any);
+
+		// branchWithSummary should have been called
+		expect(sessionManager.branchWithSummaryCalls).toHaveLength(1);
+		const call = sessionManager.branchWithSummaryCalls[0];
+		expect(call.branchFromId).toBeTruthy();
+		expect(call.summary).toContain("RALPHI INIT COMPLETE");
+		expect(call.details).toEqual(expect.objectContaining({
+			runId,
+			phase: "ralphi-init",
+			fallback: true,
+		}));
+		expect(call.fromHook).toBe(true);
+
+		// Notification should mention fallback
+		expect(turnEndCtx.ui.notifications.some(
+			(n: { message: string; level: string }) =>
+				n.message.includes("fallback") && n.message.includes(runId),
+		)).toBe(true);
+	});
+
+	it("marks run as completed after fallback finalization", async () => {
+		const sessionManager = createMockSessionManager();
+		const api1 = createMockExtensionApi(sessionManager);
+		const runtime1 = new RalphiRuntime(api1 as any);
+		const ctx1 = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+		await runtime1.startPhase(ctx1 as any, "ralphi-init", "");
+		const runId = extractRunId(api1.sendUserMessages);
+
+		await runtime1.markPhaseDone(ctx1 as any, {
+			runId,
+			phase: "ralphi-init",
+			summary: "Done",
+			outputs: [],
+		});
+
+		// New runtime without commandContext
+		const api2 = createMockExtensionApi(sessionManager);
+		const runtime2 = new RalphiRuntime(api2 as any);
+		(runtime2 as any).pendingFinalizeRuns.add(runId);
+
+		const turnEndCtx = createMockCommandContext({ sessionManager, cwd: tempDir });
+		await runtime2.handleTurnEnd(turnEndCtx as any);
+
+		// Run should be completed — verify via the ralphi-event entry
+		const events = sessionManager.getEntries().filter(
+			(e: any) => e.customType === "ralphi-event" && e.data?.kind === "phase_finalized",
+		);
+		const finalizedEvent = events.find((e: any) => e.data?.runId === runId);
+		expect(finalizedEvent).toBeTruthy();
+		expect((finalizedEvent as any).data.fallback).toBe(true);
+	});
+
+	it("uses deterministic summary from config.yaml when available", async () => {
+		const sessionManager = createMockSessionManager();
+		const api1 = createMockExtensionApi(sessionManager);
+		const runtime1 = new RalphiRuntime(api1 as any);
+		const ctx1 = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+		// Create a config.yaml so the deterministic summary is enriched
+		const ralphiDir = path.join(tempDir, ".ralphi");
+		fs.mkdirSync(ralphiDir, { recursive: true });
+		fs.writeFileSync(
+			path.join(ralphiDir, "config.yaml"),
+			"project:\n  name: \"MyApp\"\n  language: \"TypeScript\"\n  framework: \"Next.js\"\n",
+		);
+
+		await runtime1.startPhase(ctx1 as any, "ralphi-init", "");
+		const runId = extractRunId(api1.sendUserMessages);
+
+		await runtime1.markPhaseDone(ctx1 as any, {
+			runId,
+			phase: "ralphi-init",
+			summary: "Initialized MyApp",
+			outputs: [".ralphi/config.yaml"],
+		});
+
+		// New runtime without commandContext
+		const api2 = createMockExtensionApi(sessionManager);
+		const runtime2 = new RalphiRuntime(api2 as any);
+		(runtime2 as any).pendingFinalizeRuns.add(runId);
+
+		const turnEndCtx = createMockCommandContext({ sessionManager, cwd: tempDir });
+		await runtime2.handleTurnEnd(turnEndCtx as any);
+
+		// The summary should include config details
+		const call = sessionManager.branchWithSummaryCalls[0];
+		expect(call.summary).toContain("MyApp");
+		expect(call.summary).toContain("TypeScript");
+		expect(call.summary).toContain("Next.js");
+	});
+
+	it("falls back to run.summary when deterministic summary is unavailable", async () => {
+		const sessionManager = createMockSessionManager();
+		const api1 = createMockExtensionApi(sessionManager);
+		const runtime1 = new RalphiRuntime(api1 as any);
+		const ctx1 = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+		await runtime1.startPhase(ctx1 as any, "ralphi-init", "");
+		const runId = extractRunId(api1.sendUserMessages);
+
+		await runtime1.markPhaseDone(ctx1 as any, {
+			runId,
+			phase: "ralphi-init",
+			summary: "Agent-provided summary text",
+			outputs: [],
+		});
+
+		// No config.yaml exists, so buildDeterministicSummary will produce
+		// a summary based on run.summary + run.outputs (no enrichment).
+		// The deterministic builder still returns a string (just less enriched).
+		const api2 = createMockExtensionApi(sessionManager);
+		const runtime2 = new RalphiRuntime(api2 as any);
+		(runtime2 as any).pendingFinalizeRuns.add(runId);
+
+		const turnEndCtx = createMockCommandContext({ sessionManager, cwd: tempDir });
+		await runtime2.handleTurnEnd(turnEndCtx as any);
+
+		const call = sessionManager.branchWithSummaryCalls[0];
+		expect(call.summary).toContain("Agent-provided summary text");
+	});
+
+	it("falls back to manual finalize when checkpointLeafId is null", async () => {
+		const sessionManager = createMockSessionManager();
+		const api1 = createMockExtensionApi(sessionManager);
+		const runtime1 = new RalphiRuntime(api1 as any);
+		const ctx1 = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+		await runtime1.startPhase(ctx1 as any, "ralphi-init", "");
+		const runId = extractRunId(api1.sendUserMessages);
+
+		await runtime1.markPhaseDone(ctx1 as any, {
+			runId,
+			phase: "ralphi-init",
+			summary: "Done",
+			outputs: [],
+		});
+
+		// Corrupt the run to have no checkpointLeafId
+		const run = (runtime1 as any).phaseRuns.get(runId);
+		run.checkpointLeafId = null;
+		(runtime1 as any).persistState(ctx1);
+
+		// New runtime, no commandContext, no checkpoint
+		const api2 = createMockExtensionApi(sessionManager);
+		const runtime2 = new RalphiRuntime(api2 as any);
+		(runtime2 as any).pendingFinalizeRuns.add(runId);
+
+		const turnEndCtx = createMockCommandContext({ sessionManager, cwd: tempDir });
+		await runtime2.handleTurnEnd(turnEndCtx as any);
+
+		// branchWithSummary should NOT be called
+		expect(sessionManager.branchWithSummaryCalls).toHaveLength(0);
+		// Should fall back to manual finalize prompt
+		expect(turnEndCtx.ui.notifications.some(
+			(n: { message: string; level: string }) =>
+				n.level === "warning" && n.message.includes("ralphi-finalize"),
+		)).toBe(true);
+	});
+
+	it("falls back to manual finalize when branchWithSummary is not available", async () => {
+		const sessionManager = createMockSessionManager();
+		const api1 = createMockExtensionApi(sessionManager);
+		const runtime1 = new RalphiRuntime(api1 as any);
+		const ctx1 = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+		await runtime1.startPhase(ctx1 as any, "ralphi-init", "");
+		const runId = extractRunId(api1.sendUserMessages);
+
+		await runtime1.markPhaseDone(ctx1 as any, {
+			runId,
+			phase: "ralphi-init",
+			summary: "Done",
+			outputs: [],
+		});
+
+		// New runtime, strip branchWithSummary from sessionManager
+		const api2 = createMockExtensionApi(sessionManager);
+		const runtime2 = new RalphiRuntime(api2 as any);
+		(runtime2 as any).pendingFinalizeRuns.add(runId);
+
+		const strippedSessionManager = { ...sessionManager } as any;
+		delete strippedSessionManager.branchWithSummary;
+		const turnEndCtx = createMockCommandContext({ sessionManager: strippedSessionManager, cwd: tempDir });
+		await runtime2.handleTurnEnd(turnEndCtx as any);
+
+		// Should fall back to manual finalize prompt
+		expect(turnEndCtx.ui.notifications.some(
+			(n: { message: string; level: string }) =>
+				n.level === "warning" && n.message.includes("ralphi-finalize"),
+		)).toBe(true);
+	});
+
+	it("prefers navigateTree (primary path) when commandContext is available", async () => {
+		const sessionManager = createMockSessionManager();
+		const api = createMockExtensionApi(sessionManager);
+		const runtime = new RalphiRuntime(api as any);
+		const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+		await runtime.startPhase(ctx as any, "ralphi-init", "");
+		const runId = extractRunId(api.sendUserMessages);
+
+		await runtime.markPhaseDone(ctx as any, {
+			runId,
+			phase: "ralphi-init",
+			summary: "Done",
+			outputs: [],
+		});
+
+		await runtime.handleTurnEnd(ctx as any);
+
+		// navigateTree should be used (primary path), NOT branchWithSummary
+		expect(ctx.navigateCalls).toHaveLength(1);
+		expect(sessionManager.branchWithSummaryCalls).toHaveLength(0);
+	});
+});
