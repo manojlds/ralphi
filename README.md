@@ -2,6 +2,42 @@
 
 A standalone Pi extension package for autonomous phased workflows and loop execution.
 
+## Install
+
+### From npm (recommended)
+
+```bash
+pi install npm:@manojlds/ralphi
+```
+
+This installs the package and loads its bundled extension + skills automatically.
+
+If you prefer editing settings manually, add this to `~/.pi/agent/settings.json`:
+
+```json
+{
+  "packages": [
+    "npm:@manojlds/ralphi"
+  ]
+}
+```
+
+Then restart Pi or run `/reload`.
+
+### Local development / path install
+
+For developing ralphi itself, use a direct path in the **project-level** `.pi/settings.json`:
+
+```json
+{
+  "packages": [
+    ".."
+  ]
+}
+```
+
+This overrides the npm package so changes are picked up live.
+
 ## What this is
 
 `ralphi` is intentionally separate from `vaibhav` so loop behavior can evolve without impacting the existing `vaibhav` extension.
@@ -33,6 +69,11 @@ Key behavior:
 - `summary` (required)
 - `outputs` (optional)
 - `complete` (optional, defaults to `false`; set `true` to end loop)
+
+`ralphi_ask_user_question`:
+- `questions` (required) — array of structured questions with selectable options
+- Supports single-select and multi-select with optional free-text "Other"
+- Available in init, prd, and convert phases for interactive user input
 
 ## CLI
 
