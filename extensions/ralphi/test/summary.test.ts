@@ -1099,3 +1099,82 @@ describe("handleBeforeCompact integration", () => {
 		expect(result).toBeUndefined();
 	});
 });
+
+// ---- Global collapse flag ----
+
+describe("__ralphiCollapseInProgress flag", () => {
+	let tempDir: string;
+
+	beforeEach(() => {
+		tempDir = makeTempDir();
+		globalThis.__ralphiCollapseInProgress = undefined;
+	});
+
+	afterEach(() => {
+		fs.rmSync(tempDir, { recursive: true, force: true });
+		globalThis.__ralphiCollapseInProgress = undefined;
+	});
+
+	function extractRunId(messages: Array<{ text: string }>): string {
+		const kickoff = messages.find((m) => m.text.includes("runId:"));
+		const match = kickoff?.text.match(/runId:\s*"?([^"\s\n]+)"?/);
+		if (!match) throw new Error("runId not found in messages");
+		return match[1];
+	}
+
+	it("is true during navigateTree and false after", async () => {
+		const sessionManager = createMockSessionManager();
+		const api = createMockExtensionApi(sessionManager);
+		const runtime = new RalphiRuntime(api as any);
+		registerEvents(api as any, runtime);
+
+		let flagDuringNavigate: boolean | undefined;
+		const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
+		const origNavigateTree = ctx.navigateTree.bind(ctx);
+		ctx.navigateTree = async (leafId: string, options?: Record<string, unknown>) => {
+			flagDuringNavigate = globalThis.__ralphiCollapseInProgress;
+			return origNavigateTree(leafId, options);
+		};
+
+		await runtime.startPhase(ctx as any, "ralphi-init", "");
+		const runId = extractRunId(api.sendUserMessages);
+
+		await runtime.markPhaseDone(ctx as any, {
+			runId,
+			phase: "ralphi-init",
+			summary: "done",
+			outputs: [],
+		});
+
+		await runtime.handleTurnEnd(ctx as any);
+
+		expect(flagDuringNavigate).toBe(true);
+		expect(globalThis.__ralphiCollapseInProgress).toBe(false);
+	});
+
+	it("is cleared even if navigateTree throws", async () => {
+		const sessionManager = createMockSessionManager();
+		const api = createMockExtensionApi(sessionManager);
+		const runtime = new RalphiRuntime(api as any);
+		registerEvents(api as any, runtime);
+
+		const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
+		ctx.navigateTree = async () => {
+			throw new Error("boom");
+		};
+
+		await runtime.startPhase(ctx as any, "ralphi-init", "");
+		const runId = extractRunId(api.sendUserMessages);
+
+		await runtime.markPhaseDone(ctx as any, {
+			runId,
+			phase: "ralphi-init",
+			summary: "done",
+			outputs: [],
+		});
+
+		await runtime.handleTurnEnd(ctx as any).catch(() => {});
+
+		expect(globalThis.__ralphiCollapseInProgress).toBe(false);
+	});
+});

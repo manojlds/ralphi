@@ -1,6 +1,13 @@
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+
+// Signal to other extensions that a ralphi tree collapse is in progress.
+// Well-behaved extensions can check this and skip interactive prompts.
+declare global {
+	var __ralphiCollapseInProgress: boolean | undefined;
+}
+
 import type {
 	BeforeAgentStartEvent,
 	ExtensionAPI,
@@ -398,6 +405,7 @@ export class RalphiRuntime {
 
 		if (run.checkpointLeafId) {
 			this.currentlyFinalizingRun = run;
+			globalThis.__ralphiCollapseInProgress = true;
 			try {
 				const treeResult = await ctx.navigateTree(run.checkpointLeafId, {
 					summarize: true,
@@ -411,6 +419,7 @@ export class RalphiRuntime {
 					this.skipNextCompact = true;
 				}
 			} finally {
+				globalThis.__ralphiCollapseInProgress = false;
 				this.currentlyFinalizingRun = null;
 			}
 		} else {
