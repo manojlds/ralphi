@@ -25,20 +25,32 @@ Ask only critical questions where the initial prompt is ambiguous. Focus on:
 - **Scope/Boundaries:** What should it NOT do?
 - **Success Criteria:** How do we know it's done?
 
-Format questions with lettered options so the user can respond with "1A, 2C, 3B":
+Use the `ralphi_ask_user_question` tool to ask clarifying questions interactively with structured options:
 
+```json
+{
+  "questions": [
+    {
+      "id": "goal",
+      "prompt": "What is the primary goal?",
+      "type": "single",
+      "options": ["Option one", "Option two", "Option three"],
+      "allowOther": true
+    },
+    {
+      "id": "scope",
+      "prompt": "What is the scope?",
+      "type": "single",
+      "options": ["Minimal / MVP", "Full feature"],
+      "allowOther": true
+    }
+  ]
+}
 ```
-1. What is the primary goal?
-   A. Option one
-   B. Option two
-   C. Option three
-   D. Other: [please specify]
 
-2. What is the scope?
-   A. Minimal / MVP
-   B. Full feature
-   C. Other: [please specify]
-```
+This gives the user a guided, selectable experience. Use `type: "single"` for pick-one questions and `type: "multi"` for pick-many. Set `allowOther: true` when the user might have an answer outside the listed options.
+
+If the tool isn't working, fall back to text-based questions with lettered options.
 
 Skip questions the user's prompt already answered clearly.
 
@@ -108,15 +120,4 @@ Write for junior developers and AI agents:
 - **Filename:** `prd-[feature-name].md` (kebab-case)
 - Save using the `write` tool (or `edit` if updating an existing PRD file).
 
-## Phase Completion Contract (Pi-native)
-
-When the PRD task is fully complete, call `ralphi_phase_done` exactly once.
-
-Use the run metadata provided by the runtime/system prompt:
-- `runId`: provided at phase start
-- `phase`: `"ralphi-prd"`
-- `summary`: short summary of what was finalized
-- `outputs`: include the PRD path you wrote (for example `tasks/prd-my-feature.md`)
-
-Completion must be communicated only by calling `ralphi_phase_done`.
 

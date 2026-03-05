@@ -1,6 +1,7 @@
 import { StringEnum } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
+import { AskUserQuestionParams, executeAskUserQuestion } from "./ask-tool";
 import type { RalphiRuntime } from "./runtime";
 import { PHASE_KINDS } from "./types";
 
@@ -32,6 +33,24 @@ export function registerTools(pi: ExtensionAPI, runtime: RalphiRuntime) {
 					isError: true,
 				};
 			}
+		},
+	});
+
+	pi.registerTool({
+		name: "ralphi_ask_user_question",
+		label: "Ask User Question",
+		description:
+			"Ask the user one or more structured questions with selectable options. " +
+			"Supports single-select (pick one) and multi-select (pick one or more) interactions, " +
+			"with an optional 'Other' free-text path. Returns answers keyed by question ID.",
+		parameters: AskUserQuestionParams,
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const result = await executeAskUserQuestion(ctx, params);
+			return {
+				content: [{ type: "text", text: result.text }],
+				details: { answers: result.answers },
+				isError: result.isError,
+			};
 		},
 	});
 }

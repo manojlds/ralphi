@@ -13,6 +13,7 @@ import {
 	PHASE_KINDS,
 	type NonLoopPhaseName,
 	type PhaseDoneInput,
+	type PhaseName,
 	type PhaseRun,
 	type RalphiContext,
 } from "./types";
@@ -703,18 +704,10 @@ Run contract for this phase:
 		const kickoff = `Load and execute the ralphi-loop skill now.
 If skill slash commands are available, you may invoke /skill:ralphi-loop.
 
-Loop run contract:
+Loop context:
 - loopId: ${loop.id}
 - runId: ${run.id}
-- iteration: ${loop.iteration}/${loop.maxIterations}
-${pendingStory ? `- Suggested next story from prd.json: ${pendingStory.id} - ${pendingStory.title}
-` : ""}- Work one story as instructed by the skill.
-- When this iteration is complete, call ralphi_phase_done with:
-  - runId: "${run.id}"
-  - phase: "ralphi-loop-iteration"
-  - summary: what was completed this iteration
-  - outputs: key files changed
-  - complete: true only when all stories are done`;
+- iteration: ${loop.iteration}/${loop.maxIterations}`;
 
 		const storyLabel = pendingStory ? ` — ${pendingStory.id}: ${pendingStory.title}` : "";
 		this.sendProgressMessage(
@@ -1018,11 +1011,25 @@ ${pendingStory ? `- Suggested next story from prd.json: ${pendingStory.id} - ${p
 		const run = this.phaseRuns.get(runId);
 		if (!run || run.status !== "running") return;
 
-		const toolHint = `\n[RALPHI PHASE]\nYou are executing ${run.phase} (runId=${run.id}).\nContinue collaborating with the user until this phase is complete.\nWhen complete, call tool ralphi_phase_done with:\n{\n  \"runId\": \"${run.id}\",\n  \"phase\": \"${run.phase}\",\n  \"summary\": \"...\",\n  \"outputs\": [\"path1\", \"path2\"]${run.phase === "ralphi-loop-iteration" ? ',\n  \"complete\": false' : ""}\n}\nDo not call the tool early.`;
+		let toolHint = `\n[RALPHI PHASE]\nYou are executing ${run.phase} (runId=${run.id}).\nContinue collaborating with the user until this phase is complete.\nWhen complete, call tool ralphi_phase_done with:\n{\n  \"runId\": \"${run.id}\",\n  \"phase\": \"${run.phase}\",\n  \"summary\": \"...\",\n  \"outputs\": [\"path1\", \"path2\"]${run.phase === "ralphi-loop-iteration" ? ',\n  \"complete\": false' : ""}\n}\nDo not call the tool early.`;
+
+		if (run.phase !== "ralphi-loop-iteration") {
+			toolHint += `\n\nThe ralphi_ask_user_question tool is available to ask the user structured questions with selectable options (single/multi-select). Use it to gather requirements or clarifications interactively.`;
+		}
 
 		return {
 			systemPrompt: event.systemPrompt + "\n\n" + toolHint,
 		};
+	}
+
+	getActivePhaseForSession(ctx: RalphiContext): PhaseName | undefined {
+		this.restoreStateFromSession(ctx);
+		const key = this.sessionKey(ctx);
+		const runId = this.activePhaseBySession.get(key);
+		if (!runId) return undefined;
+		const run = this.phaseRuns.get(runId);
+		if (!run || run.status !== "running") return undefined;
+		return run.phase;
 	}
 
 	phaseKinds() {

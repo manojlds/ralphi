@@ -1,0 +1,66 @@
+{
+  "project": "ralphi",
+  "branchName": "ralph/interactive-qna-flow-for-init-and-prd",
+  "description": "Add an interactive, structured ask-user-question flow for ralphi-init and ralphi-prd, with clear non-UI failure behavior and no changes to convert/loop phases.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Structured Ask Tool for Runtime Questioning",
+      "description": "As an agent executing ralphi-init or ralphi-prd, I want to ask the user structured questions through a tool so that I can gather requirements consistently.",
+      "acceptanceCriteria": [
+        "A new tool (for example ralphi_ask_user_question) is registered in the extension.",
+        "Tool accepts one or multiple questions with IDs and options.",
+        "Tool supports single-select and multi-select interactions.",
+        "Tool supports an Other path with free-text input when needed.",
+        "Tool returns both concise answer output and structured details keyed by question ID.",
+        "Verify in browser (N/A for TUI) and verify in interactive Pi TUI.",
+        "Tests/typecheck/lint passes."
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Implemented ralphi_ask_user_question tool with single/multi-select, Other free-text, headless error handling, and 14 unit tests."
+    },
+    {
+      "id": "US-002",
+      "title": "Phase-Scoped Availability (Init + PRD)",
+      "description": "As a maintainer, I want interactive questioning enabled only for ralphi-init and ralphi-prd so that loop/convert behavior remains unchanged.",
+      "acceptanceCriteria": [
+        "Tool guidance and/or runtime contract makes ask flow available during ralphi-init and ralphi-prd.",
+        "ralphi-convert and loop iteration behavior are not modified by this feature.",
+        "Runtime/state handling continues to work with existing phase finalization flow.",
+        "Tests/typecheck/lint passes."
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Implemented phase-scoped availability with runtime enforcement in tools.ts, system prompt guidance in handleBeforeAgentStart, ASK_TOOL_PHASES constant, getActivePhaseForSession() runtime method, and 18 unit tests."
+    },
+    {
+      "id": "US-003",
+      "title": "Clear Non-UI Failure Behavior",
+      "description": "As a user in headless mode, I want a clear failure when an interactive question is required so I know what to provide manually.",
+      "acceptanceCriteria": [
+        "If UI is unavailable and question flow is required, the tool/flow fails with a clear actionable message.",
+        "Error text tells user what to provide as arguments/input to continue.",
+        "No silent fallback to guessed defaults.",
+        "Tests/typecheck/lint passes."
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Enhanced headless error with per-question type/options/allowOther info and concrete JSON example. Added providedAnswers parameter for headless use with full validation. 16 new unit tests."
+    },
+    {
+      "id": "US-004",
+      "title": "PRD-Focused Command Flow Compatibility",
+      "description": "As a user running /ralphi-prd, I want question flow to continue after name and description are available so that deeper discovery happens interactively.",
+      "acceptanceCriteria": [
+        "Existing /ralphi-prd name/description collection remains intact.",
+        "Interactive Q&A can be triggered after name/description are resolved.",
+        "Runtime kickoff/tool guidance encourages clarifying questions before PRD generation.",
+        "Tests/typecheck/lint passes."
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "Added PRD-specific kickoff guidance in startPhase with ask tool encouragement, enhanced handleBeforeAgentStart system prompt with PRD-specific Q&A guidance, updated ralphi-prd skill to reference ralphi_ask_user_question as preferred interactive method with text-based fallback. 15 new unit tests."
+    }
+  ]
+}

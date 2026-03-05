@@ -6,10 +6,10 @@ import { registerEvents } from "../src/events";
 import { RalphiRuntime } from "../src/runtime";
 import { createMockCommandContext, createMockExtensionApi, createMockSessionManager, createMockUi } from "./factories/pi";
 
-/** Helper: extract runId from a kickoff message */
+/** Helper: extract runId from a kickoff message (handles both quoted and unquoted formats) */
 function extractRunId(messages: Array<{ text: string }>): string {
-	const kickoff = messages.find((m) => m.text.includes("runId:"));
-	const match = kickoff?.text.match(/runId: "([^"]+)"/);
+	const kickoff = messages.find((m) => m.text.includes("runId:") || m.text.includes("runId"));
+	const match = kickoff?.text.match(/runId:\s*"?([^"\s\n]+)"?/);
 	if (!match) throw new Error("runId not found in messages");
 	return match[1];
 }
@@ -301,7 +301,9 @@ describe("ralphi extension unit-test harness", () => {
 			await runtime.startLoop(ctx as any, "--max-iterations 2");
 
 			expect(api.sessionNames.at(-1)).toContain("US-002 Highest priority story");
-			expect(api.sendUserMessages.at(-1)?.text).toContain("Suggested next story from prd.json: US-002 - Highest priority story");
+			// Story suggestion is NOT in kickoff — the skill handles story selection
+			expect(api.sendUserMessages.at(-1)?.text).toContain("ralphi-loop");
+			expect(api.sendUserMessages.at(-1)?.text).not.toContain("Suggested next story");
 		} finally {
 			fs.rmSync(tempDir, { recursive: true, force: true });
 		}
