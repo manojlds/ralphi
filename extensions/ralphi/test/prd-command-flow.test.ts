@@ -138,10 +138,9 @@ describe("US-004: PRD-Focused Command Flow Compatibility", () => {
 				expect(kickoff).toContain("runId");
 				expect(kickoff).toContain("/skill:ralphi-prd");
 
-				// PRD-specific ask tool guidance
-				expect(kickoff).toContain("ralphi_ask_user_question");
-				expect(kickoff).toContain("clarifying questions");
-				expect(kickoff).toContain("name and description have already been collected");
+				// Kickoff delegates PRD-specific workflow to the skill file
+				expect(kickoff).toContain("ralphi_phase_done");
+				expect(kickoff).toContain("/skill:ralphi-prd my-feature");
 			} finally {
 				fs.rmSync(tempDir, { recursive: true, force: true });
 			}
@@ -221,10 +220,8 @@ describe("US-004: PRD-Focused Command Flow Compatibility", () => {
 				// Generic ask tool hint
 				expect(prompt).toContain("ralphi_ask_user_question tool is available");
 
-				// PRD-specific guidance
-				expect(prompt).toContain("For ralphi-prd:");
-				expect(prompt).toContain("clarifying questions about scope, goals, technical constraints");
-				expect(prompt).toContain("Only proceed to PRD generation after receiving answers");
+				// No PRD-specific duplication — skill file handles workflow details
+				expect(prompt).not.toContain("For ralphi-prd");
 			} finally {
 				fs.rmSync(tempDir, { recursive: true, force: true });
 			}
@@ -427,8 +424,7 @@ describe("US-004: PRD-Focused Command Flow Compatibility", () => {
 			);
 
 			expect(skillContent).toContain("ralphi_ask_user_question");
-			expect(skillContent).toContain("Interactive Ask Tool");
-			expect(skillContent).toContain("Fallback: Text-Based Questions");
+			expect(skillContent).toContain("fall back to text-based questions");
 		});
 	});
 });

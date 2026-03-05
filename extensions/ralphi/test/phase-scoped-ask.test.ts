@@ -295,7 +295,7 @@ describe("ask tool availability and phase introspection", () => {
 			}
 		});
 
-		it("includes extra PRD-specific guidance for ralphi-prd phase", async () => {
+		it("does not include PRD-specific duplication for ralphi-prd phase", async () => {
 			const tempDir = createTempDir();
 			try {
 				const sessionManager = createMockSessionManager();
@@ -310,8 +310,7 @@ describe("ask tool availability and phase introspection", () => {
 
 				expect(result).toBeDefined();
 				expect(result!.systemPrompt).toContain("ralphi_ask_user_question");
-				expect(result!.systemPrompt).toContain("For ralphi-prd");
-				expect(result!.systemPrompt).toContain("clarifying questions");
+				expect(result!.systemPrompt).not.toContain("For ralphi-prd");
 			} finally {
 				fs.rmSync(tempDir, { recursive: true, force: true });
 			}

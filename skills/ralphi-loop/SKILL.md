@@ -69,17 +69,7 @@ Before committing, check if edited files have learnings worth preserving in near
 - Do NOT commit broken code
 - Keep changes focused and minimal
 - Follow existing code patterns
-
-## 8. Stop Condition
-
-After completing a user story, check if ALL stories have `passes: true`.
-
-Always complete the iteration via tool call:
-- Call `ralphi_phase_done` exactly once per iteration.
-- Use runtime-provided metadata: `runId` from kickoff, `phase: "ralphi-loop-iteration"`, concise `summary`, and `outputs`.
-- Set `complete: true` only when ALL stories are complete.
-- Otherwise set `complete: false`.
-
+- Use the `ralphi_ask_user_question` tool if you need to clarify something with the user
 
 ## Important
 

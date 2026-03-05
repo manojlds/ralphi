@@ -555,12 +555,6 @@ export class RalphiRuntime {
 			);
 		}
 
-		const prdGuidance =
-			phase === "ralphi-prd"
-				? `\n\nThe feature name and description have already been collected: "${args.trim()}".
-After loading the skill, use the ralphi_ask_user_question tool to ask 3-5 essential clarifying questions interactively before generating the PRD. Structure questions with meaningful options (single or multi-select) covering scope, goals, technical constraints, and success criteria. Only generate the PRD after gathering the user's answers.`
-				: "";
-
 		const kickoff = `Load and execute the ${phase} skill now.
 If skill slash commands are available, you may invoke /skill:${phase}${args.trim().length > 0 ? ` ${args}` : ""}.
 
@@ -571,7 +565,7 @@ Run contract for this phase:
   - phase: "${phase}"
   - summary: short summary of what was completed
   - outputs: list of key files written/updated
-- Only call ralphi_phase_done when the user-facing task is complete.${prdGuidance}`;
+- Only call ralphi_phase_done when the user-facing task is complete.`;
 
 		this.appendRalphiEvent("phase_started", { runId, phase, args: args.trim() || undefined });
 		this.persistState(ctx);
@@ -1028,10 +1022,6 @@ ${pendingStory ? `- Suggested next story from prd.json: ${pendingStory.id} - ${p
 		let toolHint = `\n[RALPHI PHASE]\nYou are executing ${run.phase} (runId=${run.id}).\nContinue collaborating with the user until this phase is complete.\nWhen complete, call tool ralphi_phase_done with:\n{\n  \"runId\": \"${run.id}\",\n  \"phase\": \"${run.phase}\",\n  \"summary\": \"...\",\n  \"outputs\": [\"path1\", \"path2\"]${run.phase === "ralphi-loop-iteration" ? ',\n  \"complete\": false' : ""}\n}\nDo not call the tool early.`;
 
 		toolHint += `\n\nThe ralphi_ask_user_question tool is available to ask the user structured questions with selectable options (single/multi-select). Use it to gather requirements or clarifications interactively.`;
-
-		if (run.phase === "ralphi-prd") {
-			toolHint += `\n\nFor ralphi-prd: The feature name and description have already been collected via the /ralphi-prd command. Use ralphi_ask_user_question to ask 3-5 essential clarifying questions about scope, goals, technical constraints, and success criteria before generating the PRD. Structure each question with concrete, meaningful options to guide the user. Only proceed to PRD generation after receiving answers.`;
-		}
 
 		return {
 			systemPrompt: event.systemPrompt + "\n\n" + toolHint,

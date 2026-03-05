@@ -124,7 +124,29 @@ Compile 3-8 concise rules. Each rule should be a single actionable sentence.
 
 ### Step 4: Present Findings and Confirm
 
-Show the user what was detected in a clear format:
+Use the `ralphi_ask_user_question` tool to gather confirmation and preferences interactively. For example:
+
+```json
+{
+  "questions": [
+    {
+      "id": "engine",
+      "prompt": "Which AI engine should be the default?",
+      "type": "single",
+      "options": ["amp", "claude", "opencode", "pi"]
+    },
+    {
+      "id": "extra_rules",
+      "prompt": "Any additional project conventions to enforce?",
+      "type": "multi",
+      "options": ["Strict TypeScript", "No default exports", "Prefer named imports"],
+      "allowOther": true
+    }
+  ]
+}
+```
+
+Also show the user what was detected in a clear format:
 
 ```
 ## Detected Configuration
@@ -143,19 +165,9 @@ Show the user what was detected in a clear format:
   1. Use vitest for testing
   2. Follow existing patterns in src/
   3. Use strict TypeScript (strict: true)
-
-### Engine
-  Which AI engine should be the default?
-  1) amp
-  2) claude
-  3) opencode
-  4) pi
 ```
 
-Ask the user to:
-- Confirm or edit each command
-- Add, remove, or edit rules
-- Choose their preferred engine (amp, claude, opencode, pi)
+Ask the user to confirm or edit commands and rules before proceeding.
 
 ### Step 5: Generate `.ralphi/config.yaml`
 
@@ -313,14 +325,3 @@ Read the existing `.gitignore` first and only add entries that are missing. Do n
 - If the user wants to add more rules later, they can run `ralphi ralph add-rule "rule text"`.
 - The config file is intentionally simple YAML — users should feel comfortable editing it by hand.
 
-## Phase Completion Contract (Pi-native)
-
-When init setup is fully complete, call `ralphi_phase_done` exactly once.
-
-Use runtime-provided metadata:
-- `runId`: provided at phase start
-- `phase`: `"ralphi-init"`
-- `summary`: concise summary of what was configured
-- `outputs`: key files created/updated (for example `.ralphi/config.yaml`, `AGENTS.md`, `.gitignore`, `prek.toml`)
-
-Completion must be communicated only by calling `ralphi_phase_done`.
