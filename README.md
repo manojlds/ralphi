@@ -47,6 +47,7 @@ Key behavior:
 - Completion is driven by tool calls via `ralphi_phase_done`
 - Loop completion is **tool-only** (`complete: true`), not marker-text based
 - Loop iteration sessions are named from `prd.json` next pending story when available
+- Optional project-local loop guidance is read from `.ralphi/loop-guidance.md` and injected only for loop iterations
 
 ## Commands
 
@@ -60,6 +61,9 @@ Key behavior:
 - `/ralphi-loop-open [loopId]` (interactive selector when omitted in TUI)
 - `/ralphi-loop-controller [loopId]` (interactive selector when omitted in TUI)
 - `/ralphi-loop-status`
+- `/ralphi-loop-guidance-show`
+- `/ralphi-loop-guidance-set <guidance>`
+- `/ralphi-loop-guidance-clear`
 
 ## Tool contract
 

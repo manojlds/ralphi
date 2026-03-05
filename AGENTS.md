@@ -30,6 +30,7 @@ Individual commands:
 - Use ESM-style TypeScript imports and preserve the existing tab-indented style.
 - Prefer mock-based runtime tests via `extensions/ralphi/test/factories/pi.ts`.
 - Follow existing runtime/tool contract patterns (`ralphi_phase_done`, loop lifecycle handling).
+- Keep project-local loop preferences in `.ralphi/*` files (for example `.ralphi/loop-guidance.md`) and load them lazily from runtime paths so non-loop phases remain unaffected.
 
 ## Directory Structure
 

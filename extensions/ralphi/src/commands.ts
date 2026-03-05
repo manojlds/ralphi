@@ -133,4 +133,25 @@ export function registerCommands(pi: ExtensionAPI, runtime: RalphiRuntime) {
 			runtime.showLoopStatus(ctx);
 		},
 	});
+
+	pi.registerCommand("ralphi-loop-guidance-show", {
+		description: "Show project-local loop guidance",
+		handler: async (_args, ctx) => {
+			runtime.showLoopGuidance(ctx);
+		},
+	});
+
+	pi.registerCommand("ralphi-loop-guidance-set", {
+		description: "Set project-local loop guidance",
+		handler: async (args, ctx) => {
+			await runtime.setLoopGuidance(ctx, args);
+		},
+	});
+
+	pi.registerCommand("ralphi-loop-guidance-clear", {
+		description: "Clear project-local loop guidance",
+		handler: async (_args, ctx) => {
+			runtime.clearLoopGuidance(ctx);
+		},
+	});
 }

@@ -7,6 +7,7 @@
 - All quality checks via `npm run check` (lint + typecheck + tests); pre-commit hook enforces this
 - Headless/non-interactive fallback pattern: tools that need UI should accept optional pre-supplied params (`providedAnswers`) and validate them; fail with actionable error + JSON example when neither UI nor pre-supplied params are available
 - Skill-contract testing pattern: for prompt/skill-only behavior changes, add unit tests that read the relevant `skills/**/SKILL.md` file and assert required protocol markers/format fields to prevent accidental prompt regressions
+- Project-local loop guidance pattern: store iteration preferences at `.ralphi/loop-guidance.md`, manage via `/ralphi-loop-guidance-*` commands, and inject only from `handleBeforeAgentStart` when phase is `ralphi-loop-iteration`
 ---
 
 ## 2026-03-04T19:30:00Z - US-001
@@ -97,4 +98,29 @@ Corrective Plan: N/A
   - `progress.txt`
 - **Learnings for future iterations:**
   - For prompt-only workflow changes, assertions against `SKILL.md` content provide a low-friction regression safety net while keeping runtime code untouched
+---
+
+## 2026-03-05T22:17:13Z - US-002
+Session: N/A
+Review Outcome: PASS
+Trajectory: ON_TRACK
+Trajectory Notes: N/A
+Corrective Plan: N/A
+- Added project-local loop guidance support via `.ralphi/loop-guidance.md` with runtime loading/injection in `handleBeforeAgentStart` for `ralphi-loop-iteration` only
+- Added loop guidance command handlers in runtime (`showLoopGuidance`, `setLoopGuidance`, `clearLoopGuidance`) and registered new commands: `/ralphi-loop-guidance-show`, `/ralphi-loop-guidance-set`, `/ralphi-loop-guidance-clear`
+- Added focused tests for guidance-present injection, missing-file fallback, non-loop phase isolation, and clear + session-switch cleanup behavior
+- Updated docs and metadata (`README.md`, `AGENTS.md`, `prd.json`, `progress.txt`) to reflect the new guidance workflow and completion state for US-002
+- Ran `npm run check` (lint + typecheck + unit tests): all pass
+- Files changed:
+  - `extensions/ralphi/src/runtime.ts`
+  - `extensions/ralphi/src/commands.ts`
+  - `extensions/ralphi/test/loop-guidance.test.ts`
+  - `extensions/ralphi/test/commands.test.ts`
+  - `README.md`
+  - `AGENTS.md`
+  - `prd.json`
+  - `progress.txt`
+- **Learnings for future iterations:**
+  - Use file-backed project preferences under `.ralphi/` with runtime helper methods so behavior survives session switches without polluting persisted loop state
+  - Keep loop-specific prompt augmentation gated by `run.phase === "ralphi-loop-iteration"` to prevent cross-phase prompt leakage
 ---

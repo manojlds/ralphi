@@ -34,8 +34,8 @@
         "Tests, typecheck, and lint pass."
       ],
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added project-local guidance support at .ralphi/loop-guidance.md with runtime injection for ralphi-loop-iteration only, graceful fallback when missing, new /ralphi-loop-guidance-show|set|clear commands, and loop-guidance unit tests covering present/missing/non-loop scope and clear+session-switch behavior."
     },
     {
       "id": "US-003",

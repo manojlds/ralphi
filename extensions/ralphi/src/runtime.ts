@@ -29,6 +29,7 @@ import {
 const STATE_ENTRY_TYPE = "ralphi-state";
 const CHECKPOINT_ENTRY_TYPE = "ralphi-checkpoint";
 const STATE_FILE_PATH = path.join(".ralphi", "runtime-state.json");
+const LOOP_GUIDANCE_FILE_PATH = path.join(".ralphi", "loop-guidance.md");
 
 type PersistedState = {
 	phaseRuns: PhaseRun[];
@@ -164,6 +165,23 @@ export class RalphiRuntime {
 
 	private stateFile(cwd: string): string {
 		return path.join(cwd, STATE_FILE_PATH);
+	}
+
+	private loopGuidanceFile(cwd: string): string {
+		return path.join(cwd, LOOP_GUIDANCE_FILE_PATH);
+	}
+
+	private loadLoopGuidance(cwd: string): string | null {
+		const file = this.loopGuidanceFile(cwd);
+		if (!fs.existsSync(file)) return null;
+
+		try {
+			const guidance = fs.readFileSync(file, "utf8").trim();
+			if (!guidance) return null;
+			return guidance;
+		} catch {
+			return null;
+		}
 	}
 
 	private readStateFile(cwd: string): PersistedState | null {
@@ -895,6 +913,49 @@ Loop context:
 		ctx.ui.notify(lines.join("\n"), "info");
 	}
 
+	showLoopGuidance(ctx: ExtensionCommandContext) {
+		const guidance = this.loadLoopGuidance(ctx.cwd);
+		if (!guidance) {
+			ctx.ui.notify(`No loop guidance configured at ${LOOP_GUIDANCE_FILE_PATH}.`, "info");
+			return;
+		}
+
+		ctx.ui.notify(`Loop guidance (${LOOP_GUIDANCE_FILE_PATH}):\n${guidance}`, "info");
+	}
+
+	async setLoopGuidance(ctx: ExtensionCommandContext, args: string) {
+		let guidance = args.trim();
+		if (!guidance) {
+			if (!ctx.hasUI) {
+				ctx.ui.notify("Usage: /ralphi-loop-guidance-set <guidance>", "warning");
+				return;
+			}
+
+			const entered = await ctx.ui.input("Loop guidance", "Guidance injected into ralphi-loop iterations");
+			guidance = entered?.trim() ?? "";
+			if (!guidance) {
+				ctx.ui.notify("Loop guidance was not updated (empty input).", "warning");
+				return;
+			}
+		}
+
+		const file = this.loopGuidanceFile(ctx.cwd);
+		fs.mkdirSync(path.dirname(file), { recursive: true });
+		fs.writeFileSync(file, `${guidance}\n`, "utf8");
+		ctx.ui.notify(`Saved loop guidance to ${LOOP_GUIDANCE_FILE_PATH}.`, "info");
+	}
+
+	clearLoopGuidance(ctx: ExtensionCommandContext) {
+		const file = this.loopGuidanceFile(ctx.cwd);
+		if (!fs.existsSync(file)) {
+			ctx.ui.notify(`No loop guidance file found at ${LOOP_GUIDANCE_FILE_PATH}.`, "info");
+			return;
+		}
+
+		fs.rmSync(file, { force: true });
+		ctx.ui.notify(`Cleared loop guidance at ${LOOP_GUIDANCE_FILE_PATH}.`, "info");
+	}
+
 	private runningLoopIterationRuns(): PhaseRun[] {
 		return [...this.phaseRuns.values()].filter((run) => run.phase === "ralphi-loop-iteration" && run.status === "running");
 	}
@@ -1095,6 +1156,13 @@ Loop context:
 
 		if (run.phase !== "ralphi-loop-iteration") {
 			toolHint += `\n\nThe ralphi_ask_user_question tool is available to ask the user structured questions with selectable options (single/multi-select). Use it to gather requirements or clarifications interactively.`;
+		}
+
+		if (run.phase === "ralphi-loop-iteration") {
+			const guidance = this.loadLoopGuidance(ctx.cwd);
+			if (guidance) {
+				toolHint += `\n\n[PROJECT LOOP GUIDANCE]\nProject-local guidance found at ${LOOP_GUIDANCE_FILE_PATH}. Follow these preferences during this loop iteration unless the user explicitly overrides:\n${guidance}`;
+			}
 		}
 
 		return {
