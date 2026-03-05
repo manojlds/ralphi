@@ -11,7 +11,7 @@ import {
 } from "./factories/pi";
 
 function extractRunId(kickoffText: string): string {
-	const match = kickoffText.match(/runId: "([^"]+)"/);
+	const match = kickoffText.match(/runId:\s*"?([^"\s\n]+)"?/);
 	if (!match) throw new Error("Could not extract runId from kickoff text");
 	return match[1];
 }

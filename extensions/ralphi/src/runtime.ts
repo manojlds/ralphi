@@ -704,18 +704,10 @@ Run contract for this phase:
 		const kickoff = `Load and execute the ralphi-loop skill now.
 If skill slash commands are available, you may invoke /skill:ralphi-loop.
 
-Loop run contract:
+Loop context:
 - loopId: ${loop.id}
 - runId: ${run.id}
-- iteration: ${loop.iteration}/${loop.maxIterations}
-${pendingStory ? `- Suggested next story from prd.json: ${pendingStory.id} - ${pendingStory.title}
-` : ""}- Work one story as instructed by the skill.
-- When this iteration is complete, call ralphi_phase_done with:
-  - runId: "${run.id}"
-  - phase: "ralphi-loop-iteration"
-  - summary: what was completed this iteration
-  - outputs: key files changed
-  - complete: true only when all stories are done`;
+- iteration: ${loop.iteration}/${loop.maxIterations}`;
 
 		const storyLabel = pendingStory ? ` — ${pendingStory.id}: ${pendingStory.title}` : "";
 		this.sendProgressMessage(
