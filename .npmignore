@@ -1,0 +1,19 @@
+# Dev & CI
+.github/
+.pi/
+.ralphi/
+tasks/
+prek.toml
+eslint.config.js
+tsconfig.json
+vitest.config.ts
+AGENTS.md
+
+# Tests
+extensions/**/test/
+extensions/**/TESTS.md
+
+# Ralph working files
+prd.json
+progress.txt
+.last-branch
