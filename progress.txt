@@ -6,6 +6,7 @@
 - Multi-select is implemented via iterative `select()` calls with a "Done" sentinel option
 - All quality checks via `npm run check` (lint + typecheck + tests); pre-commit hook enforces this
 - Headless/non-interactive fallback pattern: tools that need UI should accept optional pre-supplied params (`providedAnswers`) and validate them; fail with actionable error + JSON example when neither UI nor pre-supplied params are available
+- Skill-contract testing pattern: for prompt/skill-only behavior changes, add unit tests that read the relevant `skills/**/SKILL.md` file and assert required protocol markers/format fields to prevent accidental prompt regressions
 ---
 
 ## 2026-03-04T19:30:00Z - US-001
@@ -77,4 +78,23 @@ Session: N/A
   - Phase-specific kickoff customization pattern: use conditional string appending in `startPhase` based on the phase name
   - System prompt layering: generic tool hints first (for init+prd), then phase-specific guidance on top (for prd only)
   - Skill files can reference tools by name — the agent will pick up the hint from both the skill and the system prompt injection
+---
+
+## 2026-03-05T22:10:29Z - US-001
+Session: N/A
+Review Outcome: PASS
+Trajectory: ON_TRACK
+Trajectory Notes: N/A
+Corrective Plan: N/A
+- Updated `skills/ralphi-loop/SKILL.md` with a required post-implementation step-back review protocol that enforces re-grounding in `prd.json` and `progress.txt`, a deterministic code review pass, and a PRD trajectory check
+- Updated the progress report template in the loop skill to require `Review Outcome`, `Trajectory`, `Trajectory Notes`, and `Corrective Plan` fields
+- Added a focused unit test file validating loop skill protocol and logging format expectations without introducing runtime changes
+- Ran `npm run check` (lint + typecheck + unit tests): all pass
+- Files changed:
+  - `skills/ralphi-loop/SKILL.md`
+  - `extensions/ralphi/test/loop-skill-review-protocol.test.ts`
+  - `prd.json`
+  - `progress.txt`
+- **Learnings for future iterations:**
+  - For prompt-only workflow changes, assertions against `SKILL.md` content provide a low-friction regression safety net while keeping runtime code untouched
 ---
