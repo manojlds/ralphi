@@ -5,6 +5,8 @@ import { AskUserQuestionParams, executeAskUserQuestion } from "./ask-tool";
 import type { RalphiRuntime } from "./runtime";
 import { PHASE_KINDS } from "./types";
 
+const TRAJECTORY_KINDS = ["ON_TRACK", "RISK", "DRIFT"] as const;
+
 export function registerTools(pi: ExtensionAPI, runtime: RalphiRuntime) {
 	pi.registerTool({
 		name: "ralphi_phase_done",
@@ -16,6 +18,19 @@ export function registerTools(pi: ExtensionAPI, runtime: RalphiRuntime) {
 			summary: Type.String({ description: "Summary of completed work" }),
 			outputs: Type.Optional(Type.Array(Type.String(), { description: "Key files written/updated" })),
 			complete: Type.Optional(Type.Boolean({ description: "Set true when loop work is fully complete" })),
+			reviewPasses: Type.Optional(
+				Type.Integer({
+					minimum: 1,
+					description: "Optional loop-only quality gate metadata: number of review passes completed",
+				}),
+			),
+			trajectory: Type.Optional(
+				StringEnum(TRAJECTORY_KINDS, {
+					description: "Optional loop-only trajectory state: ON_TRACK, RISK, or DRIFT",
+				}),
+			),
+			trajectoryNotes: Type.Optional(Type.String({ description: "Optional notes for RISK/DRIFT trajectory" })),
+			correctivePlan: Type.Optional(Type.String({ description: "Optional corrective plan; required for DRIFT in strict mode" })),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			try {

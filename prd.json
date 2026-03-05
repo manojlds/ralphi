@@ -50,8 +50,8 @@
         "Tests, typecheck, and lint pass."
       ],
       "priority": 3,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added optional advanced review controls via .ralphi/loop-guidance.md front matter (reviewPasses, trajectoryGuard), extended ralphi_phase_done with additive optional review metadata fields, enforced opt-in review/DRIFT guards in runtime, emitted DRIFT corrective-plan guidance in loop output, and added loop-review-controls tests for opt-in gates + default backward compatibility."
     },
     {
       "id": "US-004",

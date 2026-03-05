@@ -48,6 +48,7 @@ Key behavior:
 - Loop completion is **tool-only** (`complete: true`), not marker-text based
 - Loop iteration sessions are named from `prd.json` next pending story when available
 - Optional project-local loop guidance is read from `.ralphi/loop-guidance.md` and injected only for loop iterations
+- Optional advanced loop review controls can be enabled via `.ralphi/loop-guidance.md` front matter (`reviewPasses`, `trajectoryGuard`)
 
 ## Commands
 
@@ -73,11 +74,28 @@ Key behavior:
 - `summary` (required)
 - `outputs` (optional)
 - `complete` (optional, defaults to `false`; set `true` to end loop)
+- `reviewPasses` (optional loop-only metadata; defaults to `1`)
+- `trajectory` (optional loop-only metadata: `ON_TRACK | RISK | DRIFT`)
+- `trajectoryNotes` (optional)
+- `correctivePlan` (optional; required only when strict DRIFT guard is enabled)
 
 `ralphi_ask_user_question`:
 - `questions` (required) — array of structured questions with selectable options
 - Supports single-select and multi-select with optional free-text "Other"
 - Available in init, prd, and convert phases for interactive user input
+
+Advanced review controls (optional):
+
+```md
+---
+reviewPasses: 2
+trajectoryGuard: require_corrective_plan
+---
+Prefer small, scoped changes per iteration.
+```
+
+- `reviewPasses` defaults to `1` when omitted
+- `trajectoryGuard` supports `off` (default), `warn_on_drift`, or `require_corrective_plan`
 
 ## CLI
 

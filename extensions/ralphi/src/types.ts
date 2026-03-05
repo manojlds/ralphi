@@ -3,6 +3,8 @@ import type { ExtensionCommandContext, ExtensionContext } from "@mariozechner/pi
 export type PhaseName = "ralphi-init" | "ralphi-prd" | "ralphi-convert" | "ralphi-loop-iteration";
 export type NonLoopPhaseName = Exclude<PhaseName, "ralphi-loop-iteration">;
 export type PhaseStatus = "running" | "awaiting_finalize" | "completed";
+export type Trajectory = "ON_TRACK" | "RISK" | "DRIFT";
+export type TrajectoryGuard = "off" | "warn_on_drift" | "require_corrective_plan";
 
 export const PHASE_KINDS: readonly PhaseName[] = [
 	"ralphi-init",
@@ -26,6 +28,10 @@ export interface PhaseRun {
 	complete?: boolean;
 	loopId?: string;
 	iteration?: number;
+	reviewPasses?: number;
+	trajectory?: Trajectory;
+	trajectoryNotes?: string;
+	correctivePlan?: string;
 	autoConfirm: boolean;
 }
 
@@ -47,6 +53,15 @@ export interface PhaseDoneInput {
 	summary: string;
 	outputs?: string[];
 	complete?: boolean;
+	reviewPasses?: number;
+	trajectory?: Trajectory;
+	trajectoryNotes?: string;
+	correctivePlan?: string;
+}
+
+export interface LoopReviewControls {
+	reviewPasses: number;
+	trajectoryGuard: TrajectoryGuard;
 }
 
 export type RalphiContext = ExtensionContext | ExtensionCommandContext;

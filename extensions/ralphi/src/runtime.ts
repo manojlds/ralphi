@@ -17,6 +17,7 @@ import type {
 import { parseMaxIterations, renderOutputs } from "./helpers";
 import { buildDeterministicSummary } from "./summary";
 import {
+	type LoopReviewControls,
 	type LoopRun,
 	PHASE_KINDS,
 	type NonLoopPhaseName,
@@ -24,12 +25,18 @@ import {
 	type PhaseName,
 	type PhaseRun,
 	type RalphiContext,
+	type TrajectoryGuard,
 } from "./types";
 
 const STATE_ENTRY_TYPE = "ralphi-state";
 const CHECKPOINT_ENTRY_TYPE = "ralphi-checkpoint";
 const STATE_FILE_PATH = path.join(".ralphi", "runtime-state.json");
 const LOOP_GUIDANCE_FILE_PATH = path.join(".ralphi", "loop-guidance.md");
+const LOOP_GUIDANCE_FRONT_MATTER_PATTERN = /^---\s*\r?\n([\s\S]*?)\r?\n---\s*(?:\r?\n|$)/;
+const DEFAULT_LOOP_REVIEW_CONTROLS: LoopReviewControls = {
+	reviewPasses: 1,
+	trajectoryGuard: "off",
+};
 
 type PersistedState = {
 	phaseRuns: PhaseRun[];
@@ -45,6 +52,11 @@ type PendingStory = {
 type LoopSelection = {
 	loop?: LoopRun;
 	cancelled?: boolean;
+};
+
+type LoopGuidanceData = {
+	guidance: string | null;
+	controls: LoopReviewControls;
 };
 
 export class RalphiRuntime {
@@ -171,7 +183,7 @@ export class RalphiRuntime {
 		return path.join(cwd, LOOP_GUIDANCE_FILE_PATH);
 	}
 
-	private loadLoopGuidance(cwd: string): string | null {
+	private readLoopGuidance(cwd: string): string | null {
 		const file = this.loopGuidanceFile(cwd);
 		if (!fs.existsSync(file)) return null;
 
@@ -182,6 +194,76 @@ export class RalphiRuntime {
 		} catch {
 			return null;
 		}
+	}
+
+	private parseTrajectoryGuard(value: string): TrajectoryGuard | null {
+		const normalized = value
+			.trim()
+			.toLowerCase()
+			.replace(/[\s-]+/g, "_");
+		if (normalized === "off" || normalized === "none") return "off";
+		if (normalized === "warn" || normalized === "warn_on_drift") return "warn_on_drift";
+		if (
+			normalized === "require" ||
+			normalized === "require_plan" ||
+			normalized === "require_corrective_plan"
+		) {
+			return "require_corrective_plan";
+		}
+		return null;
+	}
+
+	private parseLoopGuidance(raw: string): LoopGuidanceData {
+		const controls: LoopReviewControls = { ...DEFAULT_LOOP_REVIEW_CONTROLS };
+		const frontMatterMatch = raw.match(LOOP_GUIDANCE_FRONT_MATTER_PATTERN);
+		if (!frontMatterMatch) {
+			return {
+				guidance: raw.trim() || null,
+				controls,
+			};
+		}
+
+		for (const line of frontMatterMatch[1].split(/\r?\n/)) {
+			const trimmed = line.trim();
+			if (!trimmed || trimmed.startsWith("#")) continue;
+			const kv = trimmed.match(/^([\w-]+)\s*:\s*(.+)$/);
+			if (!kv) continue;
+
+			const key = kv[1].toLowerCase();
+			const value = kv[2].trim();
+			if (key === "reviewpasses") {
+				const parsed = Number.parseInt(value, 10);
+				if (Number.isFinite(parsed) && parsed > 0) {
+					controls.reviewPasses = parsed;
+				}
+				continue;
+			}
+			if (key === "trajectoryguard") {
+				const guard = this.parseTrajectoryGuard(value);
+				if (guard) controls.trajectoryGuard = guard;
+			}
+		}
+
+		const guidanceBody = raw.slice(frontMatterMatch[0].length).trim();
+		return {
+			guidance: guidanceBody || null,
+			controls,
+		};
+	}
+
+	private loadLoopGuidanceData(cwd: string): LoopGuidanceData {
+		const raw = this.readLoopGuidance(cwd);
+		if (!raw) {
+			return {
+				guidance: null,
+				controls: { ...DEFAULT_LOOP_REVIEW_CONTROLS },
+			};
+		}
+		return this.parseLoopGuidance(raw);
+	}
+
+	private hasAdvancedReviewControls(controls: LoopReviewControls): boolean {
+		return controls.reviewPasses > 1 || controls.trajectoryGuard !== "off";
 	}
 
 	private readStateFile(cwd: string): PersistedState | null {
@@ -498,11 +580,27 @@ export class RalphiRuntime {
 			summary: run.summary,
 			outputs: run.outputs,
 			complete: run.complete ?? false,
+			reviewPasses: run.reviewPasses,
+			trajectory: run.trajectory,
+			trajectoryNotes: run.trajectoryNotes,
+			correctivePlan: run.correctivePlan,
 		});
 		this.sendProgressMessage(
 			`🔁 ${loop.id}: iteration ${loop.iteration}/${loop.maxIterations} finalized — ${run.summary ?? "(no summary)"}`,
 			{ loopId: loop.id, runId: run.id, iteration: loop.iteration },
 		);
+		if (run.trajectory === "DRIFT") {
+			this.sendProgressMessage(
+				`⚠️ ${loop.id}: trajectory DRIFT signaled on iteration ${loop.iteration}. Next step: execute corrective plan before closing the related story.`,
+				{
+					loopId: loop.id,
+					runId: run.id,
+					iteration: loop.iteration,
+					trajectory: run.trajectory,
+					correctivePlan: run.correctivePlan ?? null,
+				},
+			);
+		}
 		this.persistState(ctx);
 
 		if (run.complete) {
@@ -914,7 +1012,7 @@ Loop context:
 	}
 
 	showLoopGuidance(ctx: ExtensionCommandContext) {
-		const guidance = this.loadLoopGuidance(ctx.cwd);
+		const guidance = this.readLoopGuidance(ctx.cwd);
 		if (!guidance) {
 			ctx.ui.notify(`No loop guidance configured at ${LOOP_GUIDANCE_FILE_PATH}.`, "info");
 			return;
@@ -993,6 +1091,51 @@ Loop context:
 		return `Run not found: ${params.runId}. Active loop iteration runIds: ${options.join(", ")}.`;
 	}
 
+	private loopReviewControlsForRun(run: PhaseRun): LoopReviewControls {
+		if (run.phase !== "ralphi-loop-iteration") return { ...DEFAULT_LOOP_REVIEW_CONTROLS };
+		return this.loadLoopGuidanceData(run.cwd).controls;
+	}
+
+	private validateLoopReviewControls(run: PhaseRun, params: PhaseDoneInput): { ok: true } | { ok: false; text: string } {
+		if (run.phase !== "ralphi-loop-iteration") return { ok: true };
+
+		const controls = this.loopReviewControlsForRun(run);
+		const reportedReviewPasses = params.reviewPasses ?? 1;
+		if (reportedReviewPasses < controls.reviewPasses) {
+			return {
+				ok: false,
+				text:
+					`Review-pass gate not met for ${run.id}: required reviewPasses=${controls.reviewPasses}, ` +
+					`received reviewPasses=${reportedReviewPasses}. ` +
+					`Run additional review pass(es), then call ralphi_phase_done again. ` +
+					`To disable this gate, lower reviewPasses in ${LOOP_GUIDANCE_FILE_PATH} front matter.`,
+			};
+		}
+
+		if (controls.trajectoryGuard === "require_corrective_plan" && params.trajectory === "DRIFT") {
+			const correctivePlan = params.correctivePlan?.trim() ?? "";
+			if (!correctivePlan) {
+				return {
+					ok: false,
+					text:
+						`Trajectory DRIFT guard is enabled for ${run.id}, but correctivePlan is missing. ` +
+						`Provide correctivePlan in ralphi_phase_done, then retry.`,
+				};
+			}
+		}
+
+		return { ok: true };
+	}
+
+	private driftCompletionGuidance(run: PhaseRun): string | null {
+		if (run.phase !== "ralphi-loop-iteration" || run.trajectory !== "DRIFT") return null;
+		const plan = run.correctivePlan?.trim();
+		if (plan) {
+			return `Trajectory DRIFT signaled. Corrective plan captured: ${plan}. Next-step guidance: implement this plan before marking the related story as passing.`;
+		}
+		return "Trajectory DRIFT signaled. Corrective plan is missing. Next-step guidance: add correctivePlan + trajectoryNotes in the next ralphi_phase_done call.";
+	}
+
 	async markPhaseDone(ctx: ExtensionContext, params: PhaseDoneInput): Promise<{ ok: boolean; text: string }> {
 		this.restoreStateFromSession(ctx);
 		let run = this.phaseRuns.get(params.runId);
@@ -1010,9 +1153,18 @@ Loop context:
 			};
 		}
 
+		const controlValidation = this.validateLoopReviewControls(run, params);
+		if (!controlValidation.ok) {
+			return { ok: false, text: controlValidation.text };
+		}
+
 		run.summary = params.summary;
 		run.outputs = params.outputs ?? [];
 		run.complete = params.complete ?? false;
+		run.reviewPasses = params.reviewPasses ?? 1;
+		run.trajectory = params.trajectory;
+		run.trajectoryNotes = params.trajectoryNotes?.trim() || undefined;
+		run.correctivePlan = params.correctivePlan?.trim() || undefined;
 		run.status = "awaiting_finalize";
 		this.activePhaseBySession.delete(run.sessionKey);
 		this.appendRalphiEvent("phase_done_called", {
@@ -1021,6 +1173,10 @@ Loop context:
 			summary: run.summary,
 			outputs: run.outputs,
 			complete: run.complete,
+			reviewPasses: run.reviewPasses,
+			trajectory: run.trajectory,
+			trajectoryNotes: run.trajectoryNotes,
+			correctivePlan: run.correctivePlan,
 		});
 		this.persistState(ctx);
 
@@ -1054,7 +1210,13 @@ Loop context:
 
 		this.pendingFinalizeRuns.add(run.id);
 		this.persistState(ctx);
-		return { ok: true, text: `Recorded completion for ${run.phase} (${run.id}). Finalize queued for post-turn execution.` };
+
+		const baseText = `Recorded completion for ${run.phase} (${run.id}). Finalize queued for post-turn execution.`;
+		const driftGuidance = this.driftCompletionGuidance(run);
+		return {
+			ok: true,
+			text: driftGuidance ? `${baseText}\n\n⚠️ ${driftGuidance}` : baseText,
+		};
 	}
 
 	async handleTurnEnd(ctx: ExtensionContext) {
@@ -1159,9 +1321,12 @@ Loop context:
 		}
 
 		if (run.phase === "ralphi-loop-iteration") {
-			const guidance = this.loadLoopGuidance(ctx.cwd);
-			if (guidance) {
-				toolHint += `\n\n[PROJECT LOOP GUIDANCE]\nProject-local guidance found at ${LOOP_GUIDANCE_FILE_PATH}. Follow these preferences during this loop iteration unless the user explicitly overrides:\n${guidance}`;
+			const guidanceData = this.loadLoopGuidanceData(ctx.cwd);
+			if (guidanceData.guidance) {
+				toolHint += `\n\n[PROJECT LOOP GUIDANCE]\nProject-local guidance found at ${LOOP_GUIDANCE_FILE_PATH}. Follow these preferences during this loop iteration unless the user explicitly overrides:\n${guidanceData.guidance}`;
+			}
+			if (this.hasAdvancedReviewControls(guidanceData.controls)) {
+				toolHint += `\n\n[ADVANCED REVIEW CONTROLS]\nOptional project controls are enabled via ${LOOP_GUIDANCE_FILE_PATH} front matter:\n- reviewPasses: ${guidanceData.controls.reviewPasses}\n- trajectoryGuard: ${guidanceData.controls.trajectoryGuard}\n\nWhen completing loop iterations with ralphi_phase_done, you may include optional fields:\n- reviewPasses (number, defaults to 1 when omitted)\n- trajectory (ON_TRACK | RISK | DRIFT)\n- trajectoryNotes (optional)\n- correctivePlan (required for DRIFT when trajectoryGuard=require_corrective_plan)`;
 			}
 		}
 

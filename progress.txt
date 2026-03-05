@@ -8,6 +8,7 @@
 - Headless/non-interactive fallback pattern: tools that need UI should accept optional pre-supplied params (`providedAnswers`) and validate them; fail with actionable error + JSON example when neither UI nor pre-supplied params are available
 - Skill-contract testing pattern: for prompt/skill-only behavior changes, add unit tests that read the relevant `skills/**/SKILL.md` file and assert required protocol markers/format fields to prevent accidental prompt regressions
 - Project-local loop guidance pattern: store iteration preferences at `.ralphi/loop-guidance.md`, manage via `/ralphi-loop-guidance-*` commands, and inject only from `handleBeforeAgentStart` when phase is `ralphi-loop-iteration`
+- Optional advanced loop controls pattern: use additive front matter in `.ralphi/loop-guidance.md` (`reviewPasses`, `trajectoryGuard`) so stricter gates are opt-in while default behavior remains unchanged
 ---
 
 ## 2026-03-04T19:30:00Z - US-001
@@ -123,4 +124,30 @@ Corrective Plan: N/A
 - **Learnings for future iterations:**
   - Use file-backed project preferences under `.ralphi/` with runtime helper methods so behavior survives session switches without polluting persisted loop state
   - Keep loop-specific prompt augmentation gated by `run.phase === "ralphi-loop-iteration"` to prevent cross-phase prompt leakage
+---
+
+## 2026-03-05T22:26:30Z - US-003
+Session: N/A
+Review Outcome: PASS
+Trajectory: ON_TRACK
+Trajectory Notes: N/A
+Corrective Plan: N/A
+- Added optional advanced review-pass controls via `.ralphi/loop-guidance.md` front matter parsing in runtime (`reviewPasses`, `trajectoryGuard`) while preserving default lightweight behavior when controls are absent
+- Extended `ralphi_phase_done` with additive optional loop metadata fields (`reviewPasses`, `trajectory`, `trajectoryNotes`, `correctivePlan`) and kept backward compatibility for existing call sites
+- Enforced opt-in loop quality gates: minimum review pass count and DRIFT corrective-plan requirement when `trajectoryGuard: require_corrective_plan` is enabled
+- Added DRIFT corrective-plan signal + next-step guidance in loop completion output and emitted loop progress messages for DRIFT iterations
+- Added dedicated unit tests for default compatibility, opt-in review-pass gating, DRIFT guard enforcement, DRIFT output signaling, and prompt injection hints
+- Ran `npm run check` (lint + typecheck + unit tests): all pass
+- Files changed:
+  - `extensions/ralphi/src/runtime.ts`
+  - `extensions/ralphi/src/tools.ts`
+  - `extensions/ralphi/src/types.ts`
+  - `extensions/ralphi/test/loop-review-controls.test.ts`
+  - `README.md`
+  - `AGENTS.md`
+  - `prd.json`
+  - `progress.txt`
+- **Learnings for future iterations:**
+  - Front-matter-backed controls in existing `.ralphi/*.md` files provide a low-friction path for opt-in strictness without introducing new required config files
+  - Keep stricter loop controls additive and enforce them only at `markPhaseDone` time so iteration startup/default flow remains lightweight
 ---
