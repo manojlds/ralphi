@@ -205,7 +205,10 @@ export function createMockCommandContext(options?: {
 		},
 		navigateTree: async (leafId: string, navigateOptions?: Record<string, unknown>) => {
 			ctx.navigateCalls.push({ leafId, options: navigateOptions });
-			return { cancelled: options?.navigateCancelled ?? false };
+			if (options?.navigateCancelled) return { cancelled: true };
+			// Simulate Pi behavior: navigateTree creates a new summary entry
+			sessionManager.appendCustom("tree_summary", { targetId: leafId });
+			return { cancelled: false };
 		},
 		newSession: async (newSessionOptions: Record<string, unknown>) => {
 			ctx.newSessionCalls.push(newSessionOptions);

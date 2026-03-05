@@ -21,4 +21,8 @@ export function registerEvents(pi: ExtensionAPI, runtime: RalphiRuntime) {
 	pi.on("session_before_tree", (event) => {
 		return runtime.handleBeforeTree(event);
 	});
+
+	pi.on("session_before_compact", () => {
+		return runtime.handleBeforeCompact();
+	});
 }

@@ -943,3 +943,159 @@ engine: "pi"
 		expect(result).toBeUndefined();
 	});
 });
+
+// ---- Runtime integration: handleBeforeCompact ----
+
+describe("handleBeforeCompact integration", () => {
+	let tempDir: string;
+
+	beforeEach(() => {
+		tempDir = makeTempDir();
+	});
+
+	afterEach(() => {
+		fs.rmSync(tempDir, { recursive: true, force: true });
+	});
+
+	function extractRunId(messages: Array<{ text: string }>): string {
+		const kickoff = messages.find((m) => m.text.includes("runId:"));
+		const match = kickoff?.text.match(/runId:\s*"?([^"\s\n]+)"?/);
+		if (!match) throw new Error("runId not found in messages");
+		return match[1];
+	}
+
+	it("cancels the first compaction after a successful tree collapse", async () => {
+		const sessionManager = createMockSessionManager();
+		const api = createMockExtensionApi(sessionManager);
+		const runtime = new RalphiRuntime(api as any);
+		registerEvents(api as any, runtime);
+
+		const beforeCompactHandlers = api.registeredEvents.get("session_before_compact") ?? [];
+		expect(beforeCompactHandlers).toHaveLength(1);
+
+		const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+		await runtime.startPhase(ctx as any, "ralphi-init", "");
+		const runId = extractRunId(api.sendUserMessages);
+
+		await runtime.markPhaseDone(ctx as any, {
+			runId,
+			phase: "ralphi-init",
+			summary: "done",
+			outputs: [],
+		});
+
+		// Finalize — navigateTree creates a new summary entry
+		await runtime.handleTurnEnd(ctx as any);
+
+		// Simulate Pi firing session_before_compact right after collapse
+		const compactResult = (beforeCompactHandlers[0] as any)(
+			{ branchEntries: [{ id: "any-entry" }] },
+			{},
+		);
+
+		expect(compactResult).toEqual({ cancel: true });
+	});
+
+	it("allows compaction on the second attempt (one-shot cancel)", async () => {
+		const sessionManager = createMockSessionManager();
+		const api = createMockExtensionApi(sessionManager);
+		const runtime = new RalphiRuntime(api as any);
+		registerEvents(api as any, runtime);
+
+		const beforeCompactHandlers = api.registeredEvents.get("session_before_compact") ?? [];
+		const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+		await runtime.startPhase(ctx as any, "ralphi-init", "");
+		const runId = extractRunId(api.sendUserMessages);
+
+		await runtime.markPhaseDone(ctx as any, {
+			runId,
+			phase: "ralphi-init",
+			summary: "done",
+			outputs: [],
+		});
+
+		await runtime.handleTurnEnd(ctx as any);
+
+		// First compact — cancelled
+		const result1 = (beforeCompactHandlers[0] as any)(
+			{ branchEntries: [{ id: "entry-1" }] },
+			{},
+		);
+		expect(result1).toEqual({ cancel: true });
+
+		// Second compact — allowed (flag was cleared)
+		const result2 = (beforeCompactHandlers[0] as any)(
+			{ branchEntries: [{ id: "entry-1" }] },
+			{},
+		);
+		expect(result2).toBeUndefined();
+	});
+
+	it("does not cancel compaction when no collapse happened", () => {
+		const api = createMockExtensionApi(createMockSessionManager());
+		const runtime = new RalphiRuntime(api as any);
+		registerEvents(api as any, runtime);
+
+		const beforeCompactHandlers = api.registeredEvents.get("session_before_compact") ?? [];
+
+		const result = (beforeCompactHandlers[0] as any)(
+			{ branchEntries: [{ id: "some-entry" }] },
+			{},
+		);
+
+		expect(result).toBeUndefined();
+	});
+
+	it("does not cancel compaction when no collapse happened", async () => {
+		const sessionManager = createMockSessionManager();
+		const api = createMockExtensionApi(sessionManager);
+		const runtime = new RalphiRuntime(api as any);
+		registerEvents(api as any, runtime);
+
+		const beforeCompactHandlers = api.registeredEvents.get("session_before_compact") ?? [];
+
+		// No phase was run, so no collapse happened — flag is false
+		const result = (beforeCompactHandlers[0] as any)(
+			{ branchEntries: [{ id: "different-entry" }] },
+			{},
+		);
+
+		expect(result).toBeUndefined();
+	});
+
+	it("does not cancel compaction when navigateTree was cancelled", async () => {
+		const sessionManager = createMockSessionManager();
+		const api = createMockExtensionApi(sessionManager);
+		const runtime = new RalphiRuntime(api as any);
+		registerEvents(api as any, runtime);
+
+		const beforeCompactHandlers = api.registeredEvents.get("session_before_compact") ?? [];
+		const ctx = createMockCommandContext({
+			sessionManager,
+			cwd: tempDir,
+			navigateCancelled: true,
+		});
+
+		await runtime.startPhase(ctx as any, "ralphi-init", "");
+		const runId = extractRunId(api.sendUserMessages);
+
+		await runtime.markPhaseDone(ctx as any, {
+			runId,
+			phase: "ralphi-init",
+			summary: "done",
+			outputs: [],
+		});
+
+		await runtime.handleTurnEnd(ctx as any);
+
+		// navigateTree was cancelled, so no collapsed leaf was recorded
+		const result = (beforeCompactHandlers[0] as any)(
+			{ branchEntries: [{ id: "any-entry" }] },
+			{},
+		);
+
+		expect(result).toBeUndefined();
+	});
+});

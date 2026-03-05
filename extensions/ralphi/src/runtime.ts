@@ -47,6 +47,7 @@ export class RalphiRuntime {
 	private readonly pendingFinalizeRuns = new Set<string>();
 	private _suppressEventRestore = false;
 	private currentlyFinalizingRun: PhaseRun | null = null;
+	private skipNextCompact = false;
 
 	constructor(private readonly pi: ExtensionAPI) {}
 
@@ -404,6 +405,10 @@ export class RalphiRuntime {
 				});
 				if (treeResult.cancelled) {
 					ctx.ui.notify("Tree navigation was cancelled; phase remains finalized but context was not rewound.", "warning");
+				} else {
+					// Skip the next auto-compact so it doesn't re-summarize
+					// our deterministic summary via LLM.
+					this.skipNextCompact = true;
 				}
 			} finally {
 				this.currentlyFinalizingRun = null;
@@ -1024,6 +1029,12 @@ Loop context:
 				details: { phase: this.currentlyFinalizingRun.phase, runId: this.currentlyFinalizingRun.id },
 			},
 		};
+	}
+
+	handleBeforeCompact(): { cancel: boolean } | undefined {
+		if (!this.skipNextCompact) return undefined;
+		this.skipNextCompact = false;
+		return { cancel: true };
 	}
 
 	handleBeforeAgentStart(event: BeforeAgentStartEvent, ctx: ExtensionContext): { systemPrompt: string } | void {
