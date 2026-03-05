@@ -571,3 +571,73 @@ describe("ralphi extension unit-test harness", () => {
 		}
 	});
 });
+
+// ---- isIdle() pre-flight checks ----
+
+describe("isIdle pre-flight guard", () => {
+	it("startPhase refuses when agent is busy", async () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-idle-"));
+		try {
+			const sessionManager = createMockSessionManager();
+			const api = createMockExtensionApi(sessionManager);
+			const runtime = new RalphiRuntime(api as any);
+			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir, idle: false });
+
+			await runtime.startPhase(ctx as any, "ralphi-init", "");
+
+			// No kickoff message should be sent
+			expect(api.sendUserMessages).toHaveLength(0);
+			// Error notification should fire
+			expect(ctx.ui.notifications.some(
+				(n: { message: string; level: string }) => n.level === "error" && n.message.includes("busy"),
+			)).toBe(true);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("startPhase proceeds when agent is idle", async () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-idle-"));
+		try {
+			const sessionManager = createMockSessionManager();
+			const api = createMockExtensionApi(sessionManager);
+			const runtime = new RalphiRuntime(api as any);
+			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir, idle: true });
+
+			await runtime.startPhase(ctx as any, "ralphi-init", "");
+
+			// Kickoff message should be sent
+			expect(api.sendUserMessages.length).toBeGreaterThan(0);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("startLoop refuses when agent is busy", async () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-idle-"));
+		try {
+			const sessionManager = createMockSessionManager();
+			const api = createMockExtensionApi(sessionManager);
+			const runtime = new RalphiRuntime(api as any);
+			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir, idle: false });
+
+			// Create a minimal prd.json so startLoop doesn't fail for other reasons
+			const ralphiDir = path.join(tempDir, ".ralphi");
+			fs.mkdirSync(ralphiDir, { recursive: true });
+			fs.writeFileSync(path.join(ralphiDir, "prd.json"), JSON.stringify({
+				feature: "test",
+				branch: "test-branch",
+				stories: [{ id: "S1", title: "Story 1", description: "desc", priority: 1, acceptanceCriteria: [] }],
+			}));
+
+			await runtime.startLoop(ctx as any, "");
+
+			// No loop should be created
+			expect(ctx.ui.notifications.some(
+				(n: { message: string; level: string }) => n.level === "error" && n.message.includes("busy"),
+			)).toBe(true);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+});

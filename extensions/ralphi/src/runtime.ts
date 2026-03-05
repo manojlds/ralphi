@@ -539,6 +539,12 @@ export class RalphiRuntime {
 
 	async startPhase(ctx: ExtensionCommandContext, phase: NonLoopPhaseName, args: string) {
 		this.restoreStateFromSession(ctx);
+
+		if (!ctx.isIdle()) {
+			ctx.ui.notify("Agent is busy — wait for it to finish before starting a ralphi phase.", "error");
+			return;
+		}
+
 		const key = this.sessionKey(ctx);
 		const activeRunId = this.activePhaseBySession.get(key);
 		if (activeRunId) {
@@ -742,6 +748,12 @@ Loop context:
 
 	async startLoop(ctx: ExtensionCommandContext, args: string) {
 		this.restoreStateFromSession(ctx);
+
+		if (!ctx.isIdle()) {
+			ctx.ui.notify("Agent is busy — wait for it to finish before starting a ralphi loop.", "error");
+			return;
+		}
+
 		const existing = this.activeLoop();
 		if (existing) {
 			ctx.ui.notify(`Loop already active: ${existing.id}`, "warning");
