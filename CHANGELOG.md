@@ -4,18 +4,25 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## [0.4.0] - 2026-03-06
+
 ### Release notes (reflection checkpoints documentation)
 
-- Documented reflection cadence configuration in README with `loop.reflectEvery` and `loop.reflectInstructions` examples.
-- Added loop-tool documentation for checkpoint completion metadata (`reflectionSummary`, `nextIterationPlan`).
-- Added explicit default-off and status-countdown behavior notes for checkpoint iterations.
+- Added cadence-based reflection checkpoints in loop runtime via `loop.reflectEvery` and optional `loop.reflectInstructions`.
+- Added checkpoint-only prompt injection and status countdown visibility for upcoming reflection iterations.
+- Extended `ralphi_phase_done` with additive reflection metadata fields (`reflectionSummary`, `nextIterationPlan`) and checkpoint-only validation.
+- Added runtime behavior to reset `.ralphi/progress.txt` when PRD branch changes and archive previous run data under `.ralphi/archive/`.
+- Consolidated loop runtime artifacts under `.ralphi/*`:
+  - `.ralphi/prd.json`
+  - `.ralphi/progress.txt`
+  - `.ralphi/.last-branch`
 
 ### Migration notes
 
 - Reflection checkpoints are opt-in; existing projects remain unchanged unless `loop.reflectEvery` is set.
 - Roll out gradually by starting with a larger cadence (for example `reflectEvery: 5`) before tightening.
-- Use `loop.reflectInstructions` only after baseline cadence adoption so teams can tune prompt expectations safely.
-- To disable reflection at any time, remove `loop.reflectEvery` or set it to `0`/negative.
+- `loop.reflectInstructions` should be layered in after baseline cadence adoption.
+- Runtime artifact paths have moved from project root to `.ralphi/*`; update any scripts or tooling that reference root `prd.json`, `progress.txt`, `.last-branch`, or `archive/`.
 
 ## [0.3.0] - 2026-03-06
 
