@@ -4,6 +4,33 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## [0.5.0] - 2026-03-06
+
+### Release notes (runtime modularization + timing telemetry)
+
+- Refactored `extensions/ralphi/src/runtime.ts` into focused modules:
+  - `loop-config.ts`
+  - `runtime-state.ts`
+  - `loop-engine.ts`
+  - `loop-orchestration.ts`
+  - `loop-controller.ts`
+  - `loop-finalizer.ts`
+  - `phase-controller.ts`
+- Added duration/clock utilities in `time.ts` and surfaced elapsed timing in:
+  - footer status lines (`ralphi-phase`, `ralphi-loop`)
+  - `/ralphi-loop-status` output
+  - loop iteration finalization progress and non-loop finalize notifications
+- Added a lightweight below-editor timing widget (`ralphi-timing`) showing active phase/loop elapsed time and current iteration elapsed time.
+- Extended runtime models with additive timing metadata:
+  - `PhaseRun.completedAt`
+  - `LoopRun.completedAt`
+  - `LoopRun.currentIterationStartedAt`
+
+### Migration notes
+
+- No migration required. Added timing fields are backward-compatible and optional.
+- Existing `.ralphi/runtime-state.json` snapshots continue to load; missing timing fields are treated as unset.
+
 ## [0.4.0] - 2026-03-06
 
 ### Release notes (reflection checkpoints documentation)
