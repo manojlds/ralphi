@@ -32,6 +32,10 @@ const STATE_ENTRY_TYPE = "ralphi-state";
 const CHECKPOINT_ENTRY_TYPE = "ralphi-checkpoint";
 const STATE_FILE_PATH = path.join(".ralphi", "runtime-state.json");
 const CONFIG_FILE_PATH = path.join(".ralphi", "config.yaml");
+const PRD_FILE_NAME = "prd.json";
+const PROGRESS_FILE_NAME = "progress.txt";
+const LAST_BRANCH_FILE_NAME = ".last-branch";
+const ARCHIVE_DIR_NAME = "archive";
 const DEFAULT_LOOP_REVIEW_CONTROLS: LoopReviewControls = {
 	reviewPasses: 1,
 	trajectoryGuard: "off",
@@ -228,6 +232,121 @@ export class RalphiRuntime {
 
 	private configFile(cwd: string): string {
 		return path.join(cwd, CONFIG_FILE_PATH);
+	}
+
+	private prdFile(cwd: string): string {
+		return path.join(cwd, PRD_FILE_NAME);
+	}
+
+	private progressFile(cwd: string): string {
+		return path.join(cwd, PROGRESS_FILE_NAME);
+	}
+
+	private lastBranchFile(cwd: string): string {
+		return path.join(cwd, LAST_BRANCH_FILE_NAME);
+	}
+
+	private archiveDir(cwd: string): string {
+		return path.join(cwd, ARCHIVE_DIR_NAME);
+	}
+
+	private readPrdBranchName(cwd: string): string | null {
+		const prdPath = this.prdFile(cwd);
+		if (!fs.existsSync(prdPath)) return null;
+
+		try {
+			const parsed = JSON.parse(fs.readFileSync(prdPath, "utf8")) as { branchName?: unknown };
+			if (typeof parsed.branchName !== "string") return null;
+			const branch = parsed.branchName.trim();
+			return branch.length > 0 ? branch : null;
+		} catch {
+			return null;
+		}
+	}
+
+	private readLastBranchName(cwd: string): string | null {
+		const file = this.lastBranchFile(cwd);
+		if (!fs.existsSync(file)) return null;
+
+		try {
+			const value = fs.readFileSync(file, "utf8").trim();
+			return value.length > 0 ? value : null;
+		} catch {
+			return null;
+		}
+	}
+
+	private writeLastBranchName(cwd: string, branchName: string) {
+		const file = this.lastBranchFile(cwd);
+		try {
+			fs.writeFileSync(file, `${branchName.trim()}\n`, "utf8");
+		} catch {
+			// best-effort metadata
+		}
+	}
+
+	private progressHeader(branchName: string | null): string {
+		return [
+			"## Codebase Patterns",
+			"- Add reusable, project-wide implementation patterns here.",
+			"---",
+			"",
+			"## PRD Run Context",
+			`PRD Branch: ${branchName ?? "N/A"}`,
+			`Started: ${new Date().toISOString()}`,
+			"---",
+			"",
+		].join("\n");
+	}
+
+	private archiveSuffixFromBranch(branchName: string): string {
+		const stripped = branchName.replace(/^ralph\//, "").trim();
+		const safe = stripped.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+		return safe.length > 0 ? safe : "unknown-branch";
+	}
+
+	private ensureProgressFileForCurrentPrd(cwd: string): { rotated: boolean; archivePath?: string; branchName?: string } {
+		const currentBranch = this.readPrdBranchName(cwd);
+		const lastBranch = this.readLastBranchName(cwd);
+		const progressPath = this.progressFile(cwd);
+
+		if (!fs.existsSync(progressPath)) {
+			try {
+				fs.writeFileSync(progressPath, this.progressHeader(currentBranch), "utf8");
+			} catch {
+				// best-effort file bootstrap
+			}
+		}
+
+		if (currentBranch && lastBranch && currentBranch !== lastBranch) {
+			let archivePath: string | undefined;
+			try {
+				const stamp = new Date().toISOString().slice(0, 10);
+				archivePath = path.join(this.archiveDir(cwd), `${stamp}-${this.archiveSuffixFromBranch(lastBranch)}`);
+				fs.mkdirSync(archivePath, { recursive: true });
+				if (fs.existsSync(progressPath)) {
+					fs.copyFileSync(progressPath, path.join(archivePath, PROGRESS_FILE_NAME));
+				}
+				const prdPath = this.prdFile(cwd);
+				if (fs.existsSync(prdPath)) {
+					fs.copyFileSync(prdPath, path.join(archivePath, PRD_FILE_NAME));
+				}
+			} catch {
+				archivePath = undefined;
+			}
+
+			try {
+				fs.writeFileSync(progressPath, this.progressHeader(currentBranch), "utf8");
+			} catch {
+				// best-effort reset
+			}
+
+			this.writeLastBranchName(cwd, currentBranch);
+			return { rotated: true, archivePath, branchName: currentBranch };
+		}
+
+		if (currentBranch) this.writeLastBranchName(cwd, currentBranch);
+		return { rotated: false, branchName: currentBranch ?? undefined };
 	}
 
 	private readConfigYaml(cwd: string): string | null {
@@ -1196,6 +1315,15 @@ Loop context:
 		if (!controllerSessionFile) {
 			ctx.ui.notify("Loop requires a persisted session file (interactive session).", "error");
 			return;
+		}
+
+		const progressPrep = this.ensureProgressFileForCurrentPrd(ctx.cwd);
+		if (progressPrep.rotated) {
+			const archiveNote = progressPrep.archivePath ? ` Archived prior run data to ${progressPrep.archivePath}.` : "";
+			ctx.ui.notify(
+				`Detected new PRD branch (${progressPrep.branchName ?? "unknown"}); reset progress.txt for a fresh run.${archiveNote}`,
+				"info",
+			);
 		}
 
 		const loopId = this.shortId("loop");

@@ -87,6 +87,107 @@ describe("ralphi extension unit-test harness", () => {
 		}
 	});
 
+	it("resets progress.txt and archives prior run data when PRD branch changes", async () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-progress-rotate-"));
+		try {
+			const prdPath = path.join(tempDir, "prd.json");
+			fs.writeFileSync(
+				prdPath,
+				JSON.stringify(
+					{
+						project: "ralphi",
+						branchName: "ralph/new-feature",
+						userStories: [{ id: "US-001", title: "Story", priority: 1, passes: false }],
+					},
+					null,
+					2,
+				),
+			);
+			fs.writeFileSync(path.join(tempDir, ".last-branch"), "ralph/old-feature\n", "utf8");
+			fs.writeFileSync(
+				path.join(tempDir, "progress.txt"),
+				[
+					"## Codebase Patterns",
+					"- old pattern",
+					"---",
+					"",
+					"## 2026-03-06T00:00:00Z - OLD",
+					"- old run entry",
+					"---",
+					"",
+				].join("\n"),
+				"utf8",
+			);
+
+			const sessionManager = createMockSessionManager();
+			const api = createMockExtensionApi(sessionManager);
+			const runtime = new RalphiRuntime(api as any);
+			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+			await runtime.startLoop(ctx as any, "--max-iterations 1");
+
+			const updatedProgress = fs.readFileSync(path.join(tempDir, "progress.txt"), "utf8");
+			expect(updatedProgress).toContain("## PRD Run Context");
+			expect(updatedProgress).toContain("PRD Branch: ralph/new-feature");
+			expect(updatedProgress).not.toContain("old run entry");
+			expect(fs.readFileSync(path.join(tempDir, ".last-branch"), "utf8").trim()).toBe("ralph/new-feature");
+			expect(ctx.ui.notifications.some((n) => n.message.includes("Detected new PRD branch"))).toBe(true);
+
+			const archiveRoot = path.join(tempDir, "archive");
+			expect(fs.existsSync(archiveRoot)).toBe(true);
+			const archiveFolders = fs.readdirSync(archiveRoot);
+			expect(archiveFolders.length).toBe(1);
+			const archivedProgress = fs.readFileSync(path.join(archiveRoot, archiveFolders[0], "progress.txt"), "utf8");
+			expect(archivedProgress).toContain("old run entry");
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("does not reset progress.txt when PRD branch is unchanged", async () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-progress-keep-"));
+		try {
+			const prdPath = path.join(tempDir, "prd.json");
+			fs.writeFileSync(
+				prdPath,
+				JSON.stringify(
+					{
+						project: "ralphi",
+						branchName: "ralph/same-feature",
+						userStories: [{ id: "US-001", title: "Story", priority: 1, passes: false }],
+					},
+					null,
+					2,
+				),
+			);
+			fs.writeFileSync(path.join(tempDir, ".last-branch"), "ralph/same-feature\n", "utf8");
+			const existingProgress = [
+				"## Codebase Patterns",
+				"- keep this",
+				"---",
+				"",
+				"## Existing Run",
+				"- keep this entry",
+				"---",
+				"",
+			].join("\n");
+			fs.writeFileSync(path.join(tempDir, "progress.txt"), existingProgress, "utf8");
+
+			const sessionManager = createMockSessionManager();
+			const api = createMockExtensionApi(sessionManager);
+			const runtime = new RalphiRuntime(api as any);
+			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+			await runtime.startLoop(ctx as any, "--max-iterations 1");
+
+			const updatedProgress = fs.readFileSync(path.join(tempDir, "progress.txt"), "utf8");
+			expect(updatedProgress).toBe(existingProgress);
+			expect(ctx.ui.notifications.some((n) => n.message.includes("Detected new PRD branch"))).toBe(false);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
 	it("auto-completes loop immediately when prd.json has no pending stories", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-no-pending-"));
 		try {
