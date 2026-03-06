@@ -354,7 +354,7 @@ describe("ask tool availability and phase introspection", () => {
 					runId,
 					phase: "ralphi-convert",
 					summary: "converted PRD",
-					outputs: ["prd.json"],
+					outputs: [".ralphi/prd.json"],
 				});
 				expect(done.ok).toBe(true);
 			} finally {

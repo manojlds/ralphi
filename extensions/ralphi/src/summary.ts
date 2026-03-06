@@ -165,7 +165,7 @@ function readConfigData(cwd: string): ConfigData | null {
 
 function readPrdJsonFile(cwd: string): PrdJsonData | null {
 	try {
-		const raw = fs.readFileSync(path.join(cwd, "prd.json"), "utf8");
+		const raw = fs.readFileSync(path.join(cwd, ".ralphi", "prd.json"), "utf8");
 		return parsePrdJson(raw);
 	} catch {
 		return null;

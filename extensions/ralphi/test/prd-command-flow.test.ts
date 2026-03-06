@@ -388,7 +388,7 @@ describe("US-004: PRD-Focused Command Flow Compatibility", () => {
 					runId,
 					phase: "ralphi-convert",
 					summary: "converted PRD to JSON",
-					outputs: ["prd.json"],
+					outputs: [".ralphi/prd.json"],
 				});
 				expect(done.ok).toBe(true);
 			} finally {

@@ -32,10 +32,10 @@ const STATE_ENTRY_TYPE = "ralphi-state";
 const CHECKPOINT_ENTRY_TYPE = "ralphi-checkpoint";
 const STATE_FILE_PATH = path.join(".ralphi", "runtime-state.json");
 const CONFIG_FILE_PATH = path.join(".ralphi", "config.yaml");
-const PRD_FILE_NAME = "prd.json";
-const PROGRESS_FILE_NAME = "progress.txt";
-const LAST_BRANCH_FILE_NAME = ".last-branch";
-const ARCHIVE_DIR_NAME = "archive";
+const PRD_FILE_NAME = path.join(".ralphi", "prd.json");
+const PROGRESS_FILE_NAME = path.join(".ralphi", "progress.txt");
+const LAST_BRANCH_FILE_NAME = path.join(".ralphi", ".last-branch");
+const ARCHIVE_DIR_NAME = path.join(".ralphi", "archive");
 const DEFAULT_LOOP_REVIEW_CONTROLS: LoopReviewControls = {
 	reviewPasses: 1,
 	trajectoryGuard: "off",
@@ -139,7 +139,7 @@ export class RalphiRuntime {
 	}
 
 	private appendLoopAutoCompletionNote(cwd: string, loopId: string, iteration: number) {
-		const progressPath = path.resolve(cwd, "progress.txt");
+		const progressPath = this.progressFile(cwd);
 		const note = [
 			`## ${new Date().toISOString()} - Loop Auto-Completion (${loopId})`,
 			"- Reason: No pending PRD stories remain (all userStories have passes=true).",
@@ -148,6 +148,7 @@ export class RalphiRuntime {
 		].join("\n");
 
 		try {
+			fs.mkdirSync(path.dirname(progressPath), { recursive: true });
 			if (fs.existsSync(progressPath)) {
 				const existing = fs.readFileSync(progressPath, "utf8");
 				const separator = existing.endsWith("\n") || existing.length === 0 ? "" : "\n";
@@ -279,6 +280,7 @@ export class RalphiRuntime {
 	private writeLastBranchName(cwd: string, branchName: string) {
 		const file = this.lastBranchFile(cwd);
 		try {
+			fs.mkdirSync(path.dirname(file), { recursive: true });
 			fs.writeFileSync(file, `${branchName.trim()}\n`, "utf8");
 		} catch {
 			// best-effort metadata
@@ -312,6 +314,7 @@ export class RalphiRuntime {
 
 		if (!fs.existsSync(progressPath)) {
 			try {
+				fs.mkdirSync(path.dirname(progressPath), { recursive: true });
 				fs.writeFileSync(progressPath, this.progressHeader(currentBranch), "utf8");
 			} catch {
 				// best-effort file bootstrap
@@ -325,17 +328,18 @@ export class RalphiRuntime {
 				archivePath = path.join(this.archiveDir(cwd), `${stamp}-${this.archiveSuffixFromBranch(lastBranch)}`);
 				fs.mkdirSync(archivePath, { recursive: true });
 				if (fs.existsSync(progressPath)) {
-					fs.copyFileSync(progressPath, path.join(archivePath, PROGRESS_FILE_NAME));
+					fs.copyFileSync(progressPath, path.join(archivePath, path.basename(PROGRESS_FILE_NAME)));
 				}
 				const prdPath = this.prdFile(cwd);
 				if (fs.existsSync(prdPath)) {
-					fs.copyFileSync(prdPath, path.join(archivePath, PRD_FILE_NAME));
+					fs.copyFileSync(prdPath, path.join(archivePath, path.basename(PRD_FILE_NAME)));
 				}
 			} catch {
 				archivePath = undefined;
 			}
 
 			try {
+				fs.mkdirSync(path.dirname(progressPath), { recursive: true });
 				fs.writeFileSync(progressPath, this.progressHeader(currentBranch), "utf8");
 			} catch {
 				// best-effort reset
@@ -791,7 +795,7 @@ export class RalphiRuntime {
 	}
 
 	private nextPendingStory(cwd: string): PendingStory | null {
-		const prdPath = path.resolve(cwd, "prd.json");
+		const prdPath = this.prdFile(cwd);
 		if (!fs.existsSync(prdPath)) return null;
 
 		try {
@@ -823,7 +827,7 @@ export class RalphiRuntime {
 	 * - undefined => PRD missing/unreadable/invalid shape (unknown, keep loop behavior unchanged)
 	 */
 	private hasRemainingPrdStories(cwd: string): boolean | undefined {
-		const prdPath = path.resolve(cwd, "prd.json");
+		const prdPath = this.prdFile(cwd);
 		if (!fs.existsSync(prdPath)) return undefined;
 
 		try {
@@ -1321,7 +1325,7 @@ Loop context:
 		if (progressPrep.rotated) {
 			const archiveNote = progressPrep.archivePath ? ` Archived prior run data to ${progressPrep.archivePath}.` : "";
 			ctx.ui.notify(
-				`Detected new PRD branch (${progressPrep.branchName ?? "unknown"}); reset progress.txt for a fresh run.${archiveNote}`,
+				`Detected new PRD branch (${progressPrep.branchName ?? "unknown"}); reset ${PROGRESS_FILE_NAME} for a fresh run.${archiveNote}`,
 				"info",
 			);
 		}
@@ -1832,7 +1836,7 @@ Loop context:
 		}
 
 		if (run.phase === "ralphi-loop-iteration") {
-			toolHint += `\n\n[LOOP COMPLETION RULE]\nWhen calling ralphi_phase_done for loop iterations:\n- Set complete=false (or omit complete) while PRD stories remain with passes=false.\n- Set complete=true as soon as no user stories remain with passes=false in prd.json (or loop goals are fully done).`;
+			toolHint += `\n\n[LOOP COMPLETION RULE]\nWhen calling ralphi_phase_done for loop iterations:\n- Set complete=false (or omit complete) while PRD stories remain with passes=false.\n- Set complete=true as soon as no user stories remain with passes=false in ${PRD_FILE_NAME} (or loop goals are fully done).`;
 			if (configData.guidance) {
 				toolHint += `\n\n[PROJECT LOOP GUIDANCE]\nLoop guidance found in ${CONFIG_FILE_PATH} at loop.guidance. Follow these preferences during this loop iteration unless the user explicitly overrides:\n${configData.guidance}`;
 			}

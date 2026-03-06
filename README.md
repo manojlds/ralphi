@@ -14,14 +14,14 @@ It gives you a structured, repeatable workflow for planning and implementing fea
 
 1. **`/ralphi-init`** — initialize project config and guardrails
 2. **`/ralphi-prd`** — generate PRD markdown from a feature idea
-3. **`/ralphi-convert`** — convert PRD markdown into `prd.json`
-4. **`/ralphi-loop-start`** — run iterative implementation against `prd.json`
+3. **`/ralphi-convert`** — convert PRD markdown into `.ralphi/prd.json`
+4. **`/ralphi-loop-start`** — run iterative implementation against `.ralphi/prd.json`
 
 Core behavior:
 - Commands are namespaced under `/ralphi-*`
 - Completion is driven by the `ralphi_phase_done` tool
 - Loop iterations run in fresh child sessions
-- `prd.json` is the source of truth for pending stories (`passes: false`)
+- `.ralphi/prd.json` is the source of truth for pending stories (`passes: false`)
 - Loop supports explicit completion (`complete: true`) and auto-completes when no pending stories remain
 
 ---
@@ -87,7 +87,7 @@ Example:
 
 If `name` or `description` is omitted in TUI mode, ralphi prompts for them.
 
-### 3) Convert PRD markdown to `prd.json`
+### 3) Convert PRD markdown to `.ralphi/prd.json`
 
 ```text
 /ralphi-convert tasks/prd-<feature>.md
@@ -115,8 +115,8 @@ When you run `/ralphi-loop-start`:
 2. Each iteration starts in a **fresh child session**.
 3. The loop skill reads:
    - `.ralphi/config.yaml`
-   - `prd.json`
-   - `progress.txt`
+   - `.ralphi/prd.json`
+   - `.ralphi/progress.txt`
 4. It implements the next pending story (`passes: false`) by priority.
 5. It signals completion via `ralphi_phase_done`.
 6. Runtime finalizes the iteration and either:
@@ -137,7 +137,7 @@ When you run `/ralphi-loop-start`:
 |---|---|
 | `/ralphi-init` | Run init phase with finalize + rewind flow |
 | `/ralphi-prd <name> <description>` | Run PRD generation phase |
-| `/ralphi-convert <prd-file>` | Convert PRD markdown to `prd.json` |
+| `/ralphi-convert <prd-file>` | Convert PRD markdown to `.ralphi/prd.json` |
 | `/ralphi-finalize <runId>` | Manually finalize a run (internal/recovery) |
 | `/ralphi-loop-start [--max-iterations N]` | Start autonomous loop |
 | `/ralphi-loop-next <loopId>` | Trigger next iteration (internal) |
@@ -264,7 +264,7 @@ Suggested migration path:
 
 ---
 
-## PRD data model (`prd.json`)
+## PRD data model (`.ralphi/prd.json`)
 
 Loop expects stories in `userStories` with:
 - `id`

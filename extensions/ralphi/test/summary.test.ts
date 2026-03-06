@@ -545,13 +545,13 @@ describe("buildConvertSummary", () => {
 	});
 
 	it("builds full summary with prd.json present", () => {
-		writeFile(tempDir, "prd.json", SAMPLE_PRD_JSON);
+		writeFile(tempDir, ".ralphi/prd.json", SAMPLE_PRD_JSON);
 
 		const run = makeRun({
 			phase: "ralphi-convert",
 			cwd: tempDir,
 			summary: "Converted PRD to prd.json with 3 stories.",
-			outputs: ["prd.json"],
+			outputs: [".ralphi/prd.json"],
 		});
 
 		const summary = buildConvertSummary(run);
@@ -564,7 +564,7 @@ describe("buildConvertSummary", () => {
 		expect(summary).toContain("US-002: Phase-Scoped Availability");
 		expect(summary).toContain("US-003: Graceful Fallback");
 		expect(summary).not.toMatch(/\[\d+\]/); // no priority numbers
-		expect(summary).toContain("✓ prd.json");
+		expect(summary).toContain("✓ .ralphi/prd.json");
 		expect(summary).toContain("Summary: Converted PRD to prd.json with 3 stories.");
 	});
 
@@ -578,12 +578,12 @@ describe("buildConvertSummary", () => {
 				{ id: "US-002", title: "Second defined", priority: 2, passes: false },
 			],
 		});
-		writeFile(tempDir, "prd.json", prd);
+		writeFile(tempDir, ".ralphi/prd.json", prd);
 
 		const run = makeRun({
 			phase: "ralphi-convert",
 			cwd: tempDir,
-			outputs: ["prd.json"],
+			outputs: [".ralphi/prd.json"],
 		});
 
 		const summary = buildConvertSummary(run);
@@ -600,7 +600,7 @@ describe("buildConvertSummary", () => {
 			phase: "ralphi-convert",
 			cwd: tempDir,
 			summary: "Conversion done.",
-			outputs: ["prd.json"],
+			outputs: [".ralphi/prd.json"],
 		});
 
 		const summary = buildConvertSummary(run);
@@ -608,7 +608,7 @@ describe("buildConvertSummary", () => {
 		expect(summary).toContain("[RALPHI CONVERT COMPLETE]");
 		expect(summary).not.toContain("Project:");
 		expect(summary).not.toContain("Branch:");
-		expect(summary).toContain("✗ prd.json");
+		expect(summary).toContain("✗ .ralphi/prd.json");
 		expect(summary).toContain("Summary: Conversion done.");
 	});
 });
@@ -868,7 +868,7 @@ engine: "pi"
 	});
 
 	it("provides deterministic summary for ralphi-convert phase", async () => {
-		writeFile(tempDir, "prd.json", SAMPLE_PRD_JSON);
+		writeFile(tempDir, ".ralphi/prd.json", SAMPLE_PRD_JSON);
 
 		const sessionManager = createMockSessionManager();
 		const api = createMockExtensionApi(sessionManager);
@@ -897,7 +897,7 @@ engine: "pi"
 			runId,
 			phase: "ralphi-convert",
 			summary: "Converted PRD with 3 stories.",
-			outputs: ["prd.json"],
+			outputs: [".ralphi/prd.json"],
 		});
 
 		await runtime.handleTurnEnd(ctx as any);

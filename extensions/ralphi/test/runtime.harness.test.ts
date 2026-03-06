@@ -44,6 +44,7 @@ function createRuntimeWithEvents(sessionManager: ReturnType<typeof createMockSes
 describe("ralphi extension unit-test harness", () => {
 	it("runs runtime phase startup without a real Pi session", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-project-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
 			const sessionManager = createMockSessionManager();
 			const api = createMockExtensionApi(sessionManager);
@@ -65,6 +66,7 @@ describe("ralphi extension unit-test harness", () => {
 
 	it("startLoop directly runs first iteration without sending /ralphi-loop-next", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-direct-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
 			const sessionManager = createMockSessionManager();
 			const api = createMockExtensionApi(sessionManager);
@@ -89,8 +91,9 @@ describe("ralphi extension unit-test harness", () => {
 
 	it("resets progress.txt and archives prior run data when PRD branch changes", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-progress-rotate-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
-			const prdPath = path.join(tempDir, "prd.json");
+			const prdPath = path.join(tempDir, ".ralphi", "prd.json");
 			fs.writeFileSync(
 				prdPath,
 				JSON.stringify(
@@ -103,9 +106,9 @@ describe("ralphi extension unit-test harness", () => {
 					2,
 				),
 			);
-			fs.writeFileSync(path.join(tempDir, ".last-branch"), "ralph/old-feature\n", "utf8");
+			fs.writeFileSync(path.join(tempDir, ".ralphi", ".last-branch"), "ralph/old-feature\n", "utf8");
 			fs.writeFileSync(
-				path.join(tempDir, "progress.txt"),
+				path.join(tempDir, ".ralphi", "progress.txt"),
 				[
 					"## Codebase Patterns",
 					"- old pattern",
@@ -126,14 +129,14 @@ describe("ralphi extension unit-test harness", () => {
 
 			await runtime.startLoop(ctx as any, "--max-iterations 1");
 
-			const updatedProgress = fs.readFileSync(path.join(tempDir, "progress.txt"), "utf8");
+			const updatedProgress = fs.readFileSync(path.join(tempDir, ".ralphi", "progress.txt"), "utf8");
 			expect(updatedProgress).toContain("## PRD Run Context");
 			expect(updatedProgress).toContain("PRD Branch: ralph/new-feature");
 			expect(updatedProgress).not.toContain("old run entry");
-			expect(fs.readFileSync(path.join(tempDir, ".last-branch"), "utf8").trim()).toBe("ralph/new-feature");
+			expect(fs.readFileSync(path.join(tempDir, ".ralphi", ".last-branch"), "utf8").trim()).toBe("ralph/new-feature");
 			expect(ctx.ui.notifications.some((n) => n.message.includes("Detected new PRD branch"))).toBe(true);
 
-			const archiveRoot = path.join(tempDir, "archive");
+			const archiveRoot = path.join(tempDir, ".ralphi", "archive");
 			expect(fs.existsSync(archiveRoot)).toBe(true);
 			const archiveFolders = fs.readdirSync(archiveRoot);
 			expect(archiveFolders.length).toBe(1);
@@ -146,8 +149,9 @@ describe("ralphi extension unit-test harness", () => {
 
 	it("does not reset progress.txt when PRD branch is unchanged", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-progress-keep-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
-			const prdPath = path.join(tempDir, "prd.json");
+			const prdPath = path.join(tempDir, ".ralphi", "prd.json");
 			fs.writeFileSync(
 				prdPath,
 				JSON.stringify(
@@ -160,7 +164,7 @@ describe("ralphi extension unit-test harness", () => {
 					2,
 				),
 			);
-			fs.writeFileSync(path.join(tempDir, ".last-branch"), "ralph/same-feature\n", "utf8");
+			fs.writeFileSync(path.join(tempDir, ".ralphi", ".last-branch"), "ralph/same-feature\n", "utf8");
 			const existingProgress = [
 				"## Codebase Patterns",
 				"- keep this",
@@ -171,7 +175,7 @@ describe("ralphi extension unit-test harness", () => {
 				"---",
 				"",
 			].join("\n");
-			fs.writeFileSync(path.join(tempDir, "progress.txt"), existingProgress, "utf8");
+			fs.writeFileSync(path.join(tempDir, ".ralphi", "progress.txt"), existingProgress, "utf8");
 
 			const sessionManager = createMockSessionManager();
 			const api = createMockExtensionApi(sessionManager);
@@ -180,7 +184,7 @@ describe("ralphi extension unit-test harness", () => {
 
 			await runtime.startLoop(ctx as any, "--max-iterations 1");
 
-			const updatedProgress = fs.readFileSync(path.join(tempDir, "progress.txt"), "utf8");
+			const updatedProgress = fs.readFileSync(path.join(tempDir, ".ralphi", "progress.txt"), "utf8");
 			expect(updatedProgress).toBe(existingProgress);
 			expect(ctx.ui.notifications.some((n) => n.message.includes("Detected new PRD branch"))).toBe(false);
 		} finally {
@@ -190,9 +194,10 @@ describe("ralphi extension unit-test harness", () => {
 
 	it("auto-completes loop immediately when prd.json has no pending stories", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-no-pending-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
 			fs.writeFileSync(
-				path.join(tempDir, "prd.json"),
+				path.join(tempDir, ".ralphi", "prd.json"),
 				JSON.stringify(
 					{
 						project: "ralphi",
@@ -202,7 +207,7 @@ describe("ralphi extension unit-test harness", () => {
 					2,
 				),
 			);
-			fs.writeFileSync(path.join(tempDir, "progress.txt"), "## Codebase Patterns\n---\n", "utf8");
+			fs.writeFileSync(path.join(tempDir, ".ralphi", "progress.txt"), "## Codebase Patterns\n---\n", "utf8");
 
 			const sessionManager = createMockSessionManager();
 			const api = createMockExtensionApi(sessionManager);
@@ -214,7 +219,7 @@ describe("ralphi extension unit-test harness", () => {
 			expect(ctx.newSessionCalls).toHaveLength(0);
 			expect(api.sendUserMessages.some((m) => m.text.includes("runId:"))).toBe(false);
 			expect(ctx.ui.notifications.some((n) => n.message.includes("complete after 0 iteration(s)"))).toBe(true);
-			const progress = fs.readFileSync(path.join(tempDir, "progress.txt"), "utf8");
+			const progress = fs.readFileSync(path.join(tempDir, ".ralphi", "progress.txt"), "utf8");
 			expect(progress).toContain("Loop Auto-Completion");
 			expect(progress).toContain("No pending PRD stories remain");
 		} finally {
@@ -224,8 +229,9 @@ describe("ralphi extension unit-test harness", () => {
 
 	it("auto-completes loop after finalize when no pending stories remain", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-exhausted-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
-			const prdPath = path.join(tempDir, "prd.json");
+			const prdPath = path.join(tempDir, ".ralphi", "prd.json");
 			fs.writeFileSync(
 				prdPath,
 				JSON.stringify(
@@ -237,7 +243,7 @@ describe("ralphi extension unit-test harness", () => {
 					2,
 				),
 			);
-			fs.writeFileSync(path.join(tempDir, "progress.txt"), "## Codebase Patterns\n---\n", "utf8");
+			fs.writeFileSync(path.join(tempDir, ".ralphi", "progress.txt"), "## Codebase Patterns\n---\n", "utf8");
 
 			const sessionManager = createMockSessionManager();
 			const api = createMockExtensionApi(sessionManager);
@@ -263,7 +269,7 @@ describe("ralphi extension unit-test harness", () => {
 			expect(ctx.newSessionCalls).toHaveLength(1);
 			expect(api.sendUserMessages.filter((m) => m.text.includes("runId:")).length).toBe(1);
 			expect(ctx.ui.notifications.some((n) => n.message.includes("complete after 1 iteration(s)"))).toBe(true);
-			const progress = fs.readFileSync(path.join(tempDir, "progress.txt"), "utf8");
+			const progress = fs.readFileSync(path.join(tempDir, ".ralphi", "progress.txt"), "utf8");
 			expect(progress).toContain("Loop Auto-Completion");
 			expect(progress).toContain("Iteration count at stop: 1");
 		} finally {
@@ -273,9 +279,9 @@ describe("ralphi extension unit-test harness", () => {
 
 	it("auto-completes after checkpoint finalize when reflection cadence is enabled and no pending stories remain", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-reflect-exhausted-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
-			const prdPath = path.join(tempDir, "prd.json");
-			fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
+			const prdPath = path.join(tempDir, ".ralphi", "prd.json");
 			fs.writeFileSync(
 				path.join(tempDir, ".ralphi", "config.yaml"),
 				[
@@ -296,7 +302,7 @@ describe("ralphi extension unit-test harness", () => {
 					2,
 				),
 			);
-			fs.writeFileSync(path.join(tempDir, "progress.txt"), "## Codebase Patterns\n---\n", "utf8");
+			fs.writeFileSync(path.join(tempDir, ".ralphi", "progress.txt"), "## Codebase Patterns\n---\n", "utf8");
 
 			const sessionManager = createMockSessionManager();
 			const api = createMockExtensionApi(sessionManager);
@@ -326,7 +332,7 @@ describe("ralphi extension unit-test harness", () => {
 			expect(ctx.newSessionCalls).toHaveLength(1);
 			expect(api.sendUserMessages.filter((m) => m.text.includes("runId:")).length).toBe(1);
 			expect(ctx.ui.notifications.some((n) => n.message.includes("complete after 1 iteration(s)"))).toBe(true);
-			const progress = fs.readFileSync(path.join(tempDir, "progress.txt"), "utf8");
+			const progress = fs.readFileSync(path.join(tempDir, ".ralphi", "progress.txt"), "utf8");
 			expect(progress).toContain("Loop Auto-Completion");
 			expect(progress).toContain("Iteration count at stop: 1");
 		} finally {
@@ -336,6 +342,7 @@ describe("ralphi extension unit-test harness", () => {
 
 	it("continues loop unless ralphi_phase_done sets complete=true", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-project-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
 			const sessionManager = createMockSessionManager();
 			const api = createMockExtensionApi(sessionManager);
@@ -370,6 +377,7 @@ describe("ralphi extension unit-test harness", () => {
 
 	it("stops loop when ralphi_phase_done sets complete=true", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-complete-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
 			const sessionManager = createMockSessionManager();
 			const api = createMockExtensionApi(sessionManager);
@@ -398,6 +406,7 @@ describe("ralphi extension unit-test harness", () => {
 
 	it("stops loop when max iterations reached", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-max-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
 			const sessionManager = createMockSessionManager();
 			const api = createMockExtensionApi(sessionManager);
@@ -426,6 +435,7 @@ describe("ralphi extension unit-test harness", () => {
 
 	it("stops loop when stop is requested", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-stop-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
 			const sessionManager = createMockSessionManager();
 			const api = createMockExtensionApi(sessionManager);
@@ -458,6 +468,7 @@ describe("ralphi extension unit-test harness", () => {
 
 	it("accepts loopId alias when marking loop iteration done", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-alias-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
 			const sessionManager = createMockSessionManager();
 			const api = createMockExtensionApi(sessionManager);
@@ -490,6 +501,7 @@ describe("ralphi extension unit-test harness", () => {
 
 	it("auto-finalizes queued runs on turn_end instead of sending /ralphi-finalize as plain text", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-project-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
 			const sessionManager = createMockSessionManager();
 			const api = createMockExtensionApi(sessionManager);
@@ -521,8 +533,9 @@ describe("ralphi extension unit-test harness", () => {
 
 	it("names loop iteration sessions using the next pending story from prd.json", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
-			const prdPath = path.join(tempDir, "prd.json");
+			const prdPath = path.join(tempDir, ".ralphi", "prd.json");
 			fs.writeFileSync(
 				prdPath,
 				JSON.stringify(
@@ -558,6 +571,7 @@ describe("ralphi extension unit-test harness", () => {
 
 	it("supports interactive loop selection in /ralphi-loop-open", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-open-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
 			const sessionManager = createMockSessionManager();
 			const api = createMockExtensionApi(sessionManager);
@@ -610,6 +624,7 @@ describe("ralphi extension unit-test harness", () => {
 
 	it("session_switch during finalize does not clobber loop state", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-clobber-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
 			const sessionManager = createMockSessionManager();
 			const { api, runtime } = createRuntimeWithEvents(sessionManager, tempDir);
@@ -638,6 +653,7 @@ describe("ralphi extension unit-test harness", () => {
 
 	it("session_switch during finalize preserves complete=true termination", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-complete-event-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
 			const sessionManager = createMockSessionManager();
 			const { api, runtime } = createRuntimeWithEvents(sessionManager, tempDir);
@@ -668,6 +684,7 @@ describe("ralphi extension unit-test harness", () => {
 
 	it("multi-iteration loop runs correctly with session_switch events", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-multi-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
 			const sessionManager = createMockSessionManager();
 			const { api, runtime } = createRuntimeWithEvents(sessionManager, tempDir);
@@ -703,6 +720,7 @@ describe("ralphi extension unit-test harness", () => {
 
 	it("restores loop state across sessions via project state file", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-state-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
 			const sessionA = createMockSessionManager("controller-a.json");
 			const apiA = createMockExtensionApi(sessionA);
@@ -728,6 +746,7 @@ describe("ralphi extension unit-test harness", () => {
 
 	it("prevents starting a second loop while one is active", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-double-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
 			const sessionManager = createMockSessionManager();
 			const api = createMockExtensionApi(sessionManager);
@@ -747,6 +766,7 @@ describe("ralphi extension unit-test harness", () => {
 
 	it("phase mismatch is rejected by markPhaseDone", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-mismatch-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
 			const sessionManager = createMockSessionManager();
 			const api = createMockExtensionApi(sessionManager);
@@ -772,6 +792,7 @@ describe("ralphi extension unit-test harness", () => {
 
 	it("rejects markPhaseDone for unknown runId", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-unknown-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
 			const sessionManager = createMockSessionManager();
 			const api = createMockExtensionApi(sessionManager);
@@ -794,6 +815,7 @@ describe("ralphi extension unit-test harness", () => {
 
 	it("state file reflects correct iteration after startLoop", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-state-file-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
 			const sessionManager = createMockSessionManager();
 			const api = createMockExtensionApi(sessionManager);
@@ -824,6 +846,7 @@ describe("ralphi extension unit-test harness", () => {
 describe("isIdle pre-flight guard", () => {
 	it("startPhase refuses when agent is busy", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-idle-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
 			const sessionManager = createMockSessionManager();
 			const api = createMockExtensionApi(sessionManager);
@@ -845,6 +868,7 @@ describe("isIdle pre-flight guard", () => {
 
 	it("startPhase proceeds when agent is idle", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-idle-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
 			const sessionManager = createMockSessionManager();
 			const api = createMockExtensionApi(sessionManager);
@@ -862,6 +886,7 @@ describe("isIdle pre-flight guard", () => {
 
 	it("startLoop refuses when agent is busy", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-idle-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
 			const sessionManager = createMockSessionManager();
 			const api = createMockExtensionApi(sessionManager);

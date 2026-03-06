@@ -1,18 +1,18 @@
 ---
 name: ralphi-convert
-description: "Converts PRD markdown files to prd.json format for the Ralph autonomous agent loop. Use when asked to convert a PRD, create prd.json, or turn a PRD into Ralph format."
+description: "Converts PRD markdown files to .ralphi/prd.json format for the Ralph autonomous agent loop. Use when asked to convert a PRD, create .ralphi/prd.json, or turn a PRD into Ralph format."
 ---
 
 # Ralph PRD Converter
 
-Convert a PRD markdown file into `prd.json` format for the Ralph autonomous agent loop.
+Convert a PRD markdown file into `.ralphi/prd.json` format for the Ralph autonomous agent loop.
 
 ## Workflow
 
 1. Read the PRD markdown file provided by the user.
-2. If `prd.json` already exists with a **different** `branchName`, archive it first to `archive/YYYY-MM-DD-feature-name/` before overwriting.
+2. If `.ralphi/prd.json` already exists with a **different** `branchName`, archive it first to `.ralphi/archive/YYYY-MM-DD-feature-name/` before overwriting.
 3. Convert the PRD content into structured JSON following the output format below.
-4. Write the result to `prd.json` in the project root.
+4. Write the result to `.ralphi/prd.json`.
 
 ## Output Format
 

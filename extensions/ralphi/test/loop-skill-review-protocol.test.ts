@@ -11,7 +11,7 @@ describe("US-001: ralphi-loop skill review protocol", () => {
 		const skillContent = readLoopSkill();
 
 		expect(skillContent).toContain("REQUIRED Post-Implementation Step-Back Review Protocol");
-		expect(skillContent).toContain("Re-read the target story in `prd.json`");
+		expect(skillContent).toContain("Re-read the target story in `.ralphi/prd.json`");
 		expect(skillContent).toContain("Re-read `## Codebase Patterns`");
 		expect(skillContent).toContain("deterministic code review pass");
 	});

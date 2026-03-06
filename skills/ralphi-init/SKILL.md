@@ -311,9 +311,8 @@ Append the following entries to `.gitignore` if they're not already present:
 
 ```
 # ralphi ralph
-prd.json
-progress.txt
-.last-branch
+.ralphi/*
+!.ralphi/config.yaml
 ```
 
 Read the existing `.gitignore` first and only add entries that are missing. Do not duplicate entries.

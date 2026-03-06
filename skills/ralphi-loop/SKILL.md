@@ -17,8 +17,8 @@ Read the `boundaries.never_touch` section in `.ralphi/config.yaml`. Do NOT modif
 
 ## 2. Your Task
 
-1. Read the PRD at `prd.json`
-2. Read the progress log at `progress.txt` (check Codebase Patterns section first)
+1. Read the PRD at `.ralphi/prd.json`
+2. Read the progress log at `.ralphi/progress.txt` (check Codebase Patterns section first)
 3. Check you're on the correct branch from PRD `branchName`. If not, check it out or create from main.
 4. Pick the **highest priority** user story where `passes: false`
 5. Implement that single user story
@@ -27,15 +27,15 @@ Read the `boundaries.never_touch` section in `.ralphi/config.yaml`. Do NOT modif
 8. Update AGENTS.md files if you discover reusable patterns (see below)
 9. If checks pass, commit ALL changes with message: `feat: [Story ID] - [Story Title]`
 10. Update the PRD to set `passes: true` for the completed story
-11. Append your progress to `progress.txt`
+11. Append your progress to `.ralphi/progress.txt`
 
 ## 3. REQUIRED Post-Implementation Step-Back Review Protocol
 
 Run this protocol **after implementation** and **before quality checks/commit**.
 
 1. **Re-ground in source of truth**
-   - Re-read the target story in `prd.json` (description + acceptance criteria)
-   - Re-read `## Codebase Patterns` and the latest iteration entry in `progress.txt`
+   - Re-read the target story in `.ralphi/prd.json` (description + acceptance criteria)
+   - Re-read `## Codebase Patterns` and the latest iteration entry in `.ralphi/progress.txt`
 2. **Run a deterministic code review pass**
    - Review every changed file against this checklist:
      - Every change maps to at least one acceptance criterion
@@ -60,7 +60,7 @@ Quality checks are also enforced by a pre-commit hook. If you try to commit and 
 
 ## 5. Progress Report Format
 
-APPEND to progress.txt (never replace, always append):
+APPEND to `.ralphi/progress.txt` (never replace, always append):
 ```
 ## [Date/Time] - [Story ID]
 Session: [Session URL/ID if available, else N/A]
@@ -81,7 +81,7 @@ Include a session reference if your engine provides one. Otherwise write `N/A`.
 
 ## 6. Consolidate Patterns
 
-If you discover a **reusable pattern**, add it to the `## Codebase Patterns` section at the TOP of progress.txt (create if it doesn't exist). Only add patterns that are **general and reusable**, not story-specific.
+If you discover a **reusable pattern**, add it to the `## Codebase Patterns` section at the TOP of `.ralphi/progress.txt` (create if it doesn't exist). Only add patterns that are **general and reusable**, not story-specific.
 
 ## 7. Update AGENTS.md Files
 
@@ -103,5 +103,5 @@ Before committing, check if edited files have learnings worth preserving in near
 - Work on ONE story per iteration
 - Commit frequently
 - Keep CI green
-- Read the Codebase Patterns section in progress.txt before starting
+- Read the Codebase Patterns section in `.ralphi/progress.txt` before starting
 - This phase is prompt/skill-driven only; do not require runtime command/tool changes for this review protocol
