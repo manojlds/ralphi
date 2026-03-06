@@ -31,6 +31,42 @@ function currentBranch(cwd: string): string {
 	return execSync("git branch --show-current", { cwd, stdio: "pipe" }).toString().trim();
 }
 
+function setupLoopPrereqs(cwd: string) {
+	fs.mkdirSync(path.join(cwd, ".ralphi"), { recursive: true });
+	const configPath = path.join(cwd, ".ralphi", "config.yaml");
+	if (!fs.existsSync(configPath)) {
+		fs.writeFileSync(
+			configPath,
+			[
+				"project:",
+				"  name: test",
+				"commands:",
+				"  test: \"echo test\"",
+				"engine: \"pi\"",
+				"",
+			].join("\n"),
+			"utf8",
+		);
+	}
+
+	if (!fs.existsSync(path.join(cwd, ".git"))) {
+		runGit(cwd, "git init");
+		runGit(cwd, "git checkout -b main");
+		runGit(cwd, "git config user.email 'test@example.com'");
+		runGit(cwd, "git config user.name 'Test User'");
+		if (!fs.existsSync(path.join(cwd, "README.md"))) {
+			fs.writeFileSync(path.join(cwd, "README.md"), "# test\n", "utf8");
+			runGit(cwd, "git add README.md");
+			runGit(cwd, "git commit -m 'init'");
+		}
+	}
+
+	const preCommitPath = path.join(cwd, ".git", "hooks", "pre-commit");
+	fs.mkdirSync(path.dirname(preCommitPath), { recursive: true });
+	fs.writeFileSync(preCommitPath, "#!/usr/bin/env bash\nset -euo pipefail\nralphi check\n", "utf8");
+	fs.chmodSync(preCommitPath, 0o755);
+}
+
 /** Helper: create a runtime with session_switch events wired up (simulates real Pi) */
 function createRuntimeWithEvents(sessionManager: ReturnType<typeof createMockSessionManager>, cwd: string) {
 	const api = createMockExtensionApi(sessionManager);
@@ -195,6 +231,7 @@ describe("ralphi extension unit-test harness", () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-progress-rotate-"));
 		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
+			setupLoopPrereqs(tempDir);
 			const prdPath = path.join(tempDir, ".ralphi", "prd.json");
 			fs.writeFileSync(
 				prdPath,
@@ -637,6 +674,7 @@ describe("ralphi extension unit-test harness", () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-"));
 		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
+			setupLoopPrereqs(tempDir);
 			const prdPath = path.join(tempDir, ".ralphi", "prd.json");
 			fs.writeFileSync(
 				prdPath,
@@ -675,6 +713,7 @@ describe("ralphi extension unit-test harness", () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-deps-"));
 		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
+			setupLoopPrereqs(tempDir);
 			const prdPath = path.join(tempDir, ".ralphi", "prd.json");
 			fs.writeFileSync(
 				prdPath,
@@ -711,6 +750,7 @@ describe("ralphi extension unit-test harness", () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-story-status-"));
 		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 		try {
+			setupLoopPrereqs(tempDir);
 			const prdPath = path.join(tempDir, ".ralphi", "prd.json");
 			fs.writeFileSync(
 				prdPath,

@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## [0.6.4] - 2026-03-06
+
+### Release notes (loop preflight safeguards)
+
+- Added runtime preflight validation before `/ralphi-loop-start`.
+- Loop start now fails fast when prerequisites are missing:
+  - `.ralphi/config.yaml` with at least one `commands` entry
+  - valid `.ralphi/prd.json` (`branchName`, non-empty `userStories`, valid story `id/title/status`)
+  - git repository
+  - pre-commit wiring that enforces `ralphi check`
+- Branch orchestration remains runtime-managed after preflight (switch existing branch or prompt for base when creating missing branch).
+
 ## [0.6.3] - 2026-03-06
 
 ### Release notes (runtime branch orchestration)

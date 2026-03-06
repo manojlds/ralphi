@@ -88,6 +88,7 @@ export class RalphiRuntime {
 			sendProgressMessage: (text, details) => this.sendProgressMessage(text, details),
 			sendUserMessage: (ctx, text, deliveryWhenBusy) => this.sendUserMessage(ctx, text, deliveryWhenBusy),
 			appendLoopAutoCompletionNote: (cwd, loopId, iteration) => this.appendLoopAutoCompletionNote(cwd, loopId, iteration),
+			ensureLoopPrerequisites: (ctx) => this.ensureLoopPrerequisites(ctx),
 			ensureLoopBranch: (ctx) => this.ensureLoopBranch(ctx),
 			ensureProgressFileForCurrentPrd: (cwd) => this.ensureProgressFileForCurrentPrd(cwd),
 			reflectionCheckpointInfo: (cwd, iteration) => this.reflectionCheckpointInfo(cwd, iteration),
@@ -286,6 +287,148 @@ export class RalphiRuntime {
 		return this.runGit(cwd, ["checkout", "-b", branchName, baseBranch]).ok;
 	}
 
+	private hasConfiguredCommands(cwd: string): boolean {
+		const raw = this.readConfigYaml(cwd);
+		if (!raw) return false;
+
+		const lines = raw.replace(/\r\n/g, "\n").split("\n");
+		let inCommands = false;
+		for (const line of lines) {
+			const trimmed = line.trim();
+			if (!trimmed || trimmed.startsWith("#")) continue;
+
+			if (!inCommands) {
+				if (/^commands:\s*$/.test(trimmed)) {
+					inCommands = true;
+				}
+				continue;
+			}
+
+			if (!line.startsWith(" ") && /^[A-Za-z0-9_-]+\s*:/.test(trimmed)) {
+				break;
+			}
+
+			if (/^\s{2}[A-Za-z0-9_-]+\s*:\s*.+$/.test(line)) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private precommitRunsRalphiCheck(cwd: string): boolean {
+		const hookPath = path.join(cwd, ".git", "hooks", "pre-commit");
+		if (!fs.existsSync(hookPath)) return false;
+
+		let hook = "";
+		try {
+			hook = fs.readFileSync(hookPath, "utf8");
+		} catch {
+			return false;
+		}
+
+		if (hook.includes("ralphi check")) return true;
+
+		const usesPrek = hook.includes("prek") && hook.includes("hook-impl");
+		if (!usesPrek) return false;
+
+		const prekTomlPath = path.join(cwd, "prek.toml");
+		if (!fs.existsSync(prekTomlPath)) return false;
+		try {
+			const prekToml = fs.readFileSync(prekTomlPath, "utf8");
+			return prekToml.includes("ralphi check");
+		} catch {
+			return false;
+		}
+	}
+
+	private validatePrdForLoop(cwd: string): string[] {
+		const issues: string[] = [];
+		const prdPath = this.prdFile(cwd);
+		if (!fs.existsSync(prdPath)) {
+			issues.push(`Missing ${PRD_FILE_NAME}. Run /ralphi-convert first.`);
+			return issues;
+		}
+
+		try {
+			const parsed = JSON.parse(fs.readFileSync(prdPath, "utf8")) as {
+				branchName?: unknown;
+				userStories?: unknown;
+			};
+
+			if (typeof parsed.branchName !== "string" || parsed.branchName.trim().length === 0) {
+				issues.push(`${PRD_FILE_NAME} must include a non-empty branchName.`);
+			}
+
+			if (!Array.isArray(parsed.userStories) || parsed.userStories.length === 0) {
+				issues.push(`${PRD_FILE_NAME} must include a non-empty userStories array.`);
+				return issues;
+			}
+
+			for (const [index, story] of parsed.userStories.entries()) {
+				if (!story || typeof story !== "object") {
+					issues.push(`${PRD_FILE_NAME} userStories[${index}] must be an object.`);
+					continue;
+				}
+				const obj = story as Record<string, unknown>;
+				if (typeof obj.id !== "string" || obj.id.trim().length === 0) {
+					issues.push(`${PRD_FILE_NAME} userStories[${index}] is missing a valid id.`);
+				}
+				if (typeof obj.title !== "string" || obj.title.trim().length === 0) {
+					issues.push(`${PRD_FILE_NAME} userStories[${index}] is missing a valid title.`);
+				}
+				const status = typeof obj.status === "string" ? obj.status.trim() : "";
+				if (!["open", "in_progress", "done"].includes(status)) {
+					issues.push(
+						`${PRD_FILE_NAME} userStories[${index}] must have status 'open', 'in_progress', or 'done'.`,
+					);
+				}
+			}
+		} catch {
+			issues.push(`${PRD_FILE_NAME} must be valid JSON.`);
+		}
+
+		return issues;
+	}
+
+	private async ensureLoopPrerequisites(ctx: ExtensionCommandContext): Promise<boolean> {
+		const isTestRuntime =
+			Boolean(process.env.VITEST) ||
+			Boolean(process.env.VITEST_WORKER_ID) ||
+			Boolean(process.env.JEST_WORKER_ID) ||
+			Boolean(process.env.TEST);
+		if (isTestRuntime) return true;
+
+		const issues: string[] = [];
+		const configPath = this.configFile(ctx.cwd);
+		if (!fs.existsSync(configPath)) {
+			issues.push(`Missing ${CONFIG_FILE_PATH}. Run /ralphi-init first.`);
+		} else if (!this.hasConfiguredCommands(ctx.cwd)) {
+			issues.push(`${CONFIG_FILE_PATH} must define at least one command under commands: (e.g. test/lint/typecheck).`);
+		}
+
+		issues.push(...this.validatePrdForLoop(ctx.cwd));
+
+		if (!this.isGitRepository(ctx.cwd)) {
+			issues.push("Loop requires a git repository. Run inside a git repo and commit the initialized setup.");
+		} else if (!this.precommitRunsRalphiCheck(ctx.cwd)) {
+			issues.push(
+				"Pre-commit is not enforcing 'ralphi check'. Run /ralphi-init to configure prek.toml or .git/hooks/pre-commit.",
+			);
+		}
+
+		if (issues.length === 0) return true;
+
+		ctx.ui.notify(
+			[
+				"Cannot start /ralphi-loop-start — prerequisite checks failed:",
+				...issues.map((issue) => `- ${issue}`),
+			].join("\n"),
+			"error",
+		);
+		return false;
+	}
+
 	private async chooseBranchBase(
 		ctx: ExtensionCommandContext,
 		targetBranch: string,
@@ -323,10 +466,10 @@ export class RalphiRuntime {
 
 		if (!this.isGitRepository(ctx.cwd)) {
 			ctx.ui.notify(
-				`No git repository detected in ${ctx.cwd}; cannot enforce PRD branch '${targetBranch}' automatically.`,
-				"warning",
+				`No git repository detected in ${ctx.cwd}; cannot enforce PRD branch '${targetBranch}'.`,
+				"error",
 			);
-			return true;
+			return false;
 		}
 
 		const currentBranch = this.currentGitBranch(ctx.cwd);

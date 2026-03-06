@@ -41,6 +41,7 @@ export type LoopControllerDeps = {
 	sendProgressMessage: (text: string, details?: Record<string, unknown>) => void;
 	sendUserMessage: (ctx: ExtensionCommandContext, text: string, deliveryWhenBusy?: "steer" | "followUp") => void;
 	appendLoopAutoCompletionNote: (cwd: string, loopId: string, iteration: number) => void;
+	ensureLoopPrerequisites: (ctx: ExtensionCommandContext) => Promise<boolean>;
 	ensureLoopBranch: (ctx: ExtensionCommandContext) => Promise<boolean>;
 	ensureProgressFileForCurrentPrd: (cwd: string) => { rotated: boolean; archivePath?: string; branchName?: string };
 	reflectionCheckpointInfo: (cwd: string, iteration: number) => ReflectionCheckpointInfo | null;
@@ -277,6 +278,9 @@ export class LoopController {
 			ctx.ui.notify("Loop requires a persisted session file (interactive session).", "error");
 			return;
 		}
+
+		const prereqsReady = await this.deps.ensureLoopPrerequisites(ctx);
+		if (!prereqsReady) return;
 
 		const branchReady = await this.deps.ensureLoopBranch(ctx);
 		if (!branchReady) return;

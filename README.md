@@ -112,17 +112,21 @@ Monitor and control with:
 When you run `/ralphi-loop-start`:
 
 1. A **controller loop** is created.
-2. Runtime enforces PRD branch alignment from `.ralphi/prd.json` (`branchName`):
+2. Runtime runs preflight validation. Loop start fails fast if required setup is missing:
+   - `.ralphi/config.yaml` with `commands`
+   - `.ralphi/prd.json` with valid `branchName` + `userStories`
+   - git repository + pre-commit configured to run `ralphi check`
+3. Runtime enforces PRD branch alignment from `.ralphi/prd.json` (`branchName`):
    - if branch exists, runtime switches to it
    - if branch is missing, TUI prompts whether to create from `main` or current branch
-3. Each iteration starts in a **fresh child session**.
-4. The loop skill reads:
+4. Each iteration starts in a **fresh child session**.
+5. The loop skill reads:
    - `.ralphi/config.yaml`
    - `.ralphi/prd.json`
    - `.ralphi/progress.txt`
-5. It implements the next pending story by priority (`status: open` / `in_progress`).
-6. It signals completion via `ralphi_phase_done`.
-7. Runtime finalizes the iteration and either:
+6. It implements the next pending story by priority (`status: open` / `in_progress`).
+7. It signals completion via `ralphi_phase_done`.
+8. Runtime finalizes the iteration and either:
    - starts another iteration, or
    - ends the loop (`complete: true`, user stop, max iterations, or no pending PRD stories).
 
