@@ -4,12 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## [0.3.0] - 2026-03-06
+
 ### Release notes (three-phase loop guidance rollout)
 
-- Phase 1: added a required loop step-back review protocol and trajectory logging format in `skills/ralphi-loop/SKILL.md`.
-- Phase 2: added project-local loop guidance in `.ralphi/config.yaml` (`loop.guidance`) plus guidance management commands.
-- Phase 3: added optional strict review controls in `.ralphi/config.yaml` (`loop.reviewPasses`, `loop.trajectoryGuard`) and additive loop metadata fields in `ralphi_phase_done`.
-- Loop now auto-completes when no `prd.json` stories remain with `passes: false`.
+- Phase 1: required loop step-back review protocol and trajectory logging format in `skills/ralphi-loop/SKILL.md`.
+- Phase 2: project-local loop guidance in `.ralphi/config.yaml` (`loop.guidance`) plus guidance management commands.
+- Phase 3: optional strict review controls in `.ralphi/config.yaml` (`loop.reviewPasses`, `loop.trajectoryGuard`) and additive loop metadata fields in `ralphi_phase_done`.
+- Loop auto-completion when no `prd.json` stories remain with `passes: false`.
 
 ### Migration notes
 
