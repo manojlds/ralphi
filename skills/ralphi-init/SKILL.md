@@ -1,11 +1,11 @@
 ---
 name: ralphi-init
-description: "Scans a project and sets up ralphi ralph loop configuration. Use when asked to initialize ralphi, set up ralph, configure a project for AI-driven development, or run ralphi ralph init."
+description: "Scans a project and sets up ralphi loop configuration. Use when asked to initialize ralphi, set up a ralphi project, configure a project for AI-driven development, or run /ralphi-init."
 ---
 
-# Ralphi Ralph Init
+# Ralphi Init
 
-Agentically scan a project to detect its language, framework, commands, and conventions, then generate all configuration needed for the ralphi ralph loop.
+Agentically scan a project to detect its language, framework, commands, and conventions, then generate all configuration needed for the ralphi loop.
 
 ## What Gets Created
 
@@ -13,7 +13,7 @@ Agentically scan a project to detect its language, framework, commands, and conv
 |------|---------|
 | `.ralphi/config.yaml` | Ralph loop configuration (commands, rules, engine) |
 | `AGENTS.md` | Project conventions for the AI engine |
-| `prek.toml` or `.git/hooks/pre-commit` | Pre-commit hook running `ralphi ralph check` |
+| `prek.toml` or `.git/hooks/pre-commit` | Pre-commit hook running `ralphi check` |
 | `.gitignore` updates | Ignore ralph working files |
 
 ## Workflow
@@ -168,7 +168,7 @@ Ask the user to confirm or edit commands and rules before proceeding.
 Create the config file with this structure:
 
 ```yaml
-# ralphi ralph configuration
+# ralphi configuration
 # Auto-generated — edit as needed
 
 project:
@@ -257,7 +257,7 @@ project/
 
 ### Step 7: Set Up Pre-commit Hook
 
-The pre-commit hook should run `ralphi ralph check`, which executes the quality commands from the config.
+The pre-commit hook should run `ralphi check`, which executes the quality commands from the config.
 
 **Option A — prek (preferred):**
 
@@ -269,9 +269,9 @@ repo = "local"
 hooks = [
   {
     id = "ralphi-check",
-    name = "ralphi ralph check",
+    name = "ralphi check",
     language = "system",
-    entry = "ralphi ralph check",
+    entry = "ralphi check",
     always_run = true,
     pass_filenames = false,
   },
@@ -287,7 +287,7 @@ If prek is not available, create `.git/hooks/pre-commit`:
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
-ralphi ralph check
+ralphi check
 ```
 
 Make it executable with `chmod +x .git/hooks/pre-commit`.
@@ -299,7 +299,7 @@ Make it executable with `chmod +x .git/hooks/pre-commit`.
 Append the following entries to `.gitignore` if they're not already present:
 
 ```
-# ralphi ralph
+# ralphi
 .ralphi/*
 !.ralphi/config.yaml
 ```
@@ -308,8 +308,7 @@ Read the existing `.gitignore` first and only add entries that are missing. Do n
 
 ## Notes
 
-- `ralphi ralph check` is the command that runs quality checks from the config. It is called by the pre-commit hook to ensure code quality before commits.
+- `ralphi check` is the command that runs quality checks from the config. It is called by the pre-commit hook to ensure code quality before commits.
 - Ralphi is Pi-native. No external engine skill installation is required for init.
-- If the user wants to add more rules later, they can run `ralphi ralph add-rule "rule text"`.
 - The config file is intentionally simple YAML — users should feel comfortable editing it by hand.
 

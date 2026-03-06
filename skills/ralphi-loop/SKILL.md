@@ -57,7 +57,7 @@ Run this protocol **after implementation** and **before quality checks/commit**.
 
 ## 4. Quality Checks
 
-Read the `commands` section in `.ralphi/config.yaml` and run each configured command (test, lint, build, typecheck, etc.). You can also run `ralphi ralph check` which runs all commands in sequence.
+Read the `commands` section in `.ralphi/config.yaml` and run each configured command (test, lint, build, typecheck, etc.). You can also run `ralphi check` which runs all commands in sequence.
 
 Quality checks are also enforced by a pre-commit hook. If you try to commit and checks fail, fix the issues and try again. Do NOT use `git commit --no-verify`.
 

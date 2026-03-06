@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## [0.6.2] - 2026-03-06
+
+### Release notes (command wording cleanup)
+
+- Updated skill guidance to use the correct command `ralphi check`.
+- Removed stale `ralphi ralph ...` wording from init/loop skill instructions.
+
 ## [0.6.1] - 2026-03-06
 
 ### Release notes (status display + Pi-native init cleanup)
