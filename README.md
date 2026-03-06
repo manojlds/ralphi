@@ -1,6 +1,30 @@
 # ralphi
 
-A standalone Pi extension package for autonomous phased workflows and loop execution.
+`ralphi` is a Pi-native implementation of the **Ralph autonomous loop pattern**.
+
+The name is literal: **Ralph + Pi = ralphi**.
+
+It gives you a structured, repeatable workflow for planning and implementing features with fresh-context loop iterations.
+
+---
+
+## What ralphi does
+
+`ralphi` provides a phased workflow plus an autonomous implementation loop:
+
+1. **`/ralphi-init`** — initialize project config and guardrails
+2. **`/ralphi-prd`** — generate PRD markdown from a feature idea
+3. **`/ralphi-convert`** — convert PRD markdown into `prd.json`
+4. **`/ralphi-loop-start`** — run iterative implementation against `prd.json`
+
+Core behavior:
+- Commands are namespaced under `/ralphi-*`
+- Completion is driven by the `ralphi_phase_done` tool
+- Loop iterations run in fresh child sessions
+- `prd.json` is the source of truth for pending stories (`passes: false`)
+- Loop supports explicit completion (`complete: true`) and auto-completes when no pending stories remain
+
+---
 
 ## Install
 
@@ -26,7 +50,7 @@ Then restart Pi or run `/reload`.
 
 ### Local development / path install
 
-For developing ralphi itself, use a direct path in the **project-level** `.pi/settings.json`:
+For developing `ralphi` itself, use a direct path in project-level `.pi/settings.json`:
 
 ```json
 {
@@ -36,88 +60,208 @@ For developing ralphi itself, use a direct path in the **project-level** `.pi/se
 }
 ```
 
-This overrides the npm package so changes are picked up live.
+This overrides the npm package so local changes are picked up live.
 
-## What this is
+---
 
-`ralphi` is intentionally separate from `vaibhav` so loop behavior can evolve without impacting the existing `vaibhav` extension.
+## Quick start (typical flow)
 
-Key behavior:
-- Commands are namespaced under `/ralphi-*`
-- Completion is driven by tool calls via `ralphi_phase_done`
-- Loop completion is **tool-only** (`complete: true`), not marker-text based
-- Loop iteration sessions are named from `prd.json` next pending story when available
-- Optional project-local loop guidance is read from `.ralphi/config.yaml` (`loop.guidance`) and injected only for loop iterations
-- Optional advanced loop review controls can be enabled via `.ralphi/config.yaml` (`loop.reviewPasses`, `loop.trajectoryGuard`)
+### 1) Initialize project settings
 
-## Commands
-
-- `/ralphi-init`
-- `/ralphi-prd <name> <description>` (prompts in TUI if omitted)
-- `/ralphi-convert <prd-file>`
-- `/ralphi-finalize <runId>`
-- `/ralphi-loop-start [--max-iterations N]`
-- `/ralphi-loop-next <loopId>`
-- `/ralphi-loop-stop [loopId]`
-- `/ralphi-loop-open [loopId]` (interactive selector when omitted in TUI)
-- `/ralphi-loop-controller [loopId]` (interactive selector when omitted in TUI)
-- `/ralphi-loop-status`
-- `/ralphi-loop-guidance-show`
-- `/ralphi-loop-guidance-set <guidance>`
-- `/ralphi-loop-guidance-clear`
-
-## Tool contract
-
-`ralphi_phase_done`:
-- `runId` (required)
-- `phase` (required)
-- `summary` (required)
-- `outputs` (optional)
-- `complete` (optional, defaults to `false`; set `true` to end loop)
-- `reviewPasses` (optional loop-only metadata; defaults to `1`)
-- `trajectory` (optional loop-only metadata: `ON_TRACK | RISK | DRIFT`)
-- `trajectoryNotes` (optional)
-- `correctivePlan` (optional; required only when strict DRIFT guard is enabled)
-
-`ralphi_ask_user_question`:
-- `questions` (required) — array of structured questions with selectable options
-- Supports single-select and multi-select with optional free-text "Other"
-- Available in init, prd, and convert phases for interactive user input
-
-Advanced review controls (optional):
-
-```yaml
-loop:
-  guidance: "Prefer small, scoped changes per iteration."
-  reviewPasses: 2
-  trajectoryGuard: "require_corrective_plan"
+```text
+/ralphi-init
 ```
 
-- `loop.reviewPasses` defaults to `1` when omitted
-- `loop.trajectoryGuard` supports `off` (default), `warn_on_drift`, or `require_corrective_plan`
+This phase prepares `.ralphi/config.yaml` and establishes rules/commands for the project.
 
-## Release notes (three-phase loop guidance rollout)
+### 2) Create a PRD
 
-- Phase 1 introduced a required loop step-back review protocol and trajectory logging format in `skills/ralphi-loop/SKILL.md`.
-- Phase 2 introduced project-local loop guidance in `.ralphi/config.yaml` (`loop.guidance`) and guidance management commands.
-- Phase 3 introduced optional strict loop review controls via `.ralphi/config.yaml` (`loop.reviewPasses`, `loop.trajectoryGuard`) and additive loop metadata fields in `ralphi_phase_done`.
+```text
+/ralphi-prd <name> <description>
+```
 
-## Migration notes
+Example:
+```text
+/ralphi-prd loop-guidance add loop trajectory guard and review gates
+```
 
-- No breaking migration is required; existing loop workflows continue to work without changes.
-- To adopt guidance, add `loop.guidance` to `.ralphi/config.yaml`.
-- To adopt strict controls, set `loop.reviewPasses` and `loop.trajectoryGuard` gradually while keeping defaults for lightweight behavior.
-- To roll back strictness quickly, set `loop.reviewPasses: 1` and `loop.trajectoryGuard: "off"`.
+If `name` or `description` is omitted in TUI mode, ralphi prompts for them.
 
-## CLI
+### 3) Convert PRD markdown to `prd.json`
 
-`ralphi` ships a small CLI for project-local quality checks:
+```text
+/ralphi-convert tasks/prd-<feature>.md
+```
+
+### 4) Start the autonomous loop
+
+```text
+/ralphi-loop-start --max-iterations 50
+```
+
+Monitor and control with:
+- `/ralphi-loop-status`
+- `/ralphi-loop-open [loopId]`
+- `/ralphi-loop-controller [loopId]`
+- `/ralphi-loop-stop [loopId]`
+
+---
+
+## How the loop works
+
+When you run `/ralphi-loop-start`:
+
+1. A **controller loop** is created.
+2. Each iteration starts in a **fresh child session**.
+3. The loop skill reads:
+   - `.ralphi/config.yaml`
+   - `prd.json`
+   - `progress.txt`
+4. It implements the next pending story (`passes: false`) by priority.
+5. It signals completion via `ralphi_phase_done`.
+6. Runtime finalizes the iteration and either:
+   - starts another iteration, or
+   - ends the loop (`complete: true`, user stop, max iterations, or no pending PRD stories).
+
+### Iteration/session model
+
+- Controller session tracks loop lifecycle
+- Iteration sessions isolate context
+- Status is persisted in `.ralphi/runtime-state.json`
+
+---
+
+## Commands reference
+
+| Command | Purpose |
+|---|---|
+| `/ralphi-init` | Run init phase with finalize + rewind flow |
+| `/ralphi-prd <name> <description>` | Run PRD generation phase |
+| `/ralphi-convert <prd-file>` | Convert PRD markdown to `prd.json` |
+| `/ralphi-finalize <runId>` | Manually finalize a run (internal/recovery) |
+| `/ralphi-loop-start [--max-iterations N]` | Start autonomous loop |
+| `/ralphi-loop-next <loopId>` | Trigger next iteration (internal) |
+| `/ralphi-loop-stop [loopId]` | Request loop stop |
+| `/ralphi-loop-open [loopId]` | Jump to active/recent iteration session |
+| `/ralphi-loop-controller [loopId]` | Return to controller session |
+| `/ralphi-loop-status` | Show active runs/loops |
+| `/ralphi-loop-guidance-show` | Show loop guidance from config |
+| `/ralphi-loop-guidance-set <guidance>` | Set `loop.guidance` in config |
+| `/ralphi-loop-guidance-clear` | Clear `loop.guidance` in config |
+
+---
+
+## Tools reference
+
+## `ralphi_phase_done`
+
+Marks a phase/iteration complete and queues finalize behavior.
+
+Required fields:
+- `runId`
+- `phase`
+- `summary`
+
+Optional fields:
+- `outputs: string[]`
+- `complete: boolean` (loop-only meaningful; set true to end loop)
+- `reviewPasses: number` (loop metadata)
+- `trajectory: ON_TRACK | RISK | DRIFT` (loop metadata)
+- `trajectoryNotes: string`
+- `correctivePlan: string` (required when strict DRIFT guard is enabled)
+
+## `ralphi_ask_user_question`
+
+Structured interactive question tool for init/prd/convert phases.
+
+Supports:
+- single-select and multi-select
+- optional `Other` free-text path
+- headless `providedAnswers` for non-interactive mode
+
+---
+
+## Configuration (`.ralphi/config.yaml`)
+
+Typical config:
+
+```yaml
+project:
+  name: "my-project"
+  language: "TypeScript"
+  framework: "Pi extension"
+
+commands:
+  test: "npm run test"
+  lint: "npm run lint"
+  typecheck: "npm run typecheck"
+
+rules:
+  - "run npm run check before finalizing"
+  - "keep changes scoped to one story"
+
+loop:
+  guidance: "Take a step back each iteration and reassess PRD alignment."
+  reviewPasses: 1
+  trajectoryGuard: "require_corrective_plan"
+
+boundaries:
+  never_touch:
+    - "*.lock"
+    - ".env*"
+
+engine: "pi"
+max_retries: 3
+```
+
+### Important sections
+
+- `commands`: quality gates used during execution
+- `rules`: injected into system prompt as project constraints
+- `loop.guidance`: loop-specific steering text
+- `loop.reviewPasses`: minimum expected review passes before completion
+- `loop.trajectoryGuard`:
+  - `off`
+  - `warn_on_drift`
+  - `require_corrective_plan`
+- `boundaries.never_touch`: files/patterns that must not be modified
+
+---
+
+## PRD data model (`prd.json`)
+
+Loop expects stories in `userStories` with:
+- `id`
+- `title`
+- `priority`
+- `passes` (boolean)
+
+The loop selects highest-priority story where `passes !== true`.
+
+When all stories are `passes: true`, loop can terminate.
+
+---
+
+## Operational tips
+
+- Keep each story small enough for one iteration.
+- Use `/ralphi-loop-open` to inspect in-flight iteration work.
+- If an iteration can’t finalize, use `/ralphi-finalize <runId>`.
+- Use `/ralphi-loop-status` before starting new loops.
+
+---
+
+## CLI helper
+
+`ralphi` ships a project-local quality-check CLI:
 
 ```bash
 npx --no-install ralphi check
 ```
 
-It reads `.ralphi/config.yaml` and runs configured commands in order.
+It reads `.ralphi/config.yaml` and runs configured commands in sequence.
+
+---
 
 ## Local development
 
@@ -127,3 +271,9 @@ npm run check
 npm run ralphi:check
 npm pack --dry-run
 ```
+
+---
+
+## Changelog
+
+For release history and migration notes, see [`CHANGELOG.md`](./CHANGELOG.md).

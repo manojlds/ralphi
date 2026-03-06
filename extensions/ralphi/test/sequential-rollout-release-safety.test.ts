@@ -10,8 +10,8 @@ describe("US-004: sequential rollout and release safety", () => {
 		);
 	}
 
-	function readReadme(): string {
-		return fs.readFileSync(path.resolve(__dirname, "../../../README.md"), "utf8");
+	function readChangelog(): string {
+		return fs.readFileSync(path.resolve(__dirname, "../../../CHANGELOG.md"), "utf8");
 	}
 
 	it("defines strict phase sequencing gates between phases", () => {
@@ -36,11 +36,11 @@ describe("US-004: sequential rollout and release safety", () => {
 
 	it("defines release notes and migration notes for external behavior changes", () => {
 		const prd = readThreePhasePrd();
-		const readme = readReadme();
+		const changelog = readChangelog();
 
 		expect(prd).toContain("Release Notes (Externally Visible Changes)");
 		expect(prd).toContain("Migration Notes");
-		expect(readme).toContain("Release notes (three-phase loop guidance rollout)");
-		expect(readme).toContain("Migration notes");
+		expect(changelog).toContain("Release notes (three-phase loop guidance rollout)");
+		expect(changelog).toContain("Migration notes");
 	});
 });
