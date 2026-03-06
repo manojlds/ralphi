@@ -1,3 +1,5 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
 import type { RalphiRuntime } from "./runtime";
 
@@ -46,6 +48,60 @@ async function resolvePrdArgs(args: string, ctx: ExtensionCommandContext): Promi
 	return `${name} ${description}`;
 }
 
+function listPrdFiles(cwd: string): string[] {
+	const tasksDir = path.join(cwd, "tasks");
+	if (!fs.existsSync(tasksDir)) return [];
+
+	const found = new Set<string>();
+	const stack = [tasksDir];
+
+	while (stack.length > 0) {
+		const dir = stack.pop()!;
+		const entries = fs.readdirSync(dir, { withFileTypes: true });
+		for (const entry of entries) {
+			const fullPath = path.join(dir, entry.name);
+			if (entry.isDirectory()) {
+				stack.push(fullPath);
+				continue;
+			}
+			if (!entry.isFile()) continue;
+
+			const lower = entry.name.toLowerCase();
+			const isPrdMarkdown = lower === "prd.md" || (lower.startsWith("prd-") && lower.endsWith(".md"));
+			if (!isPrdMarkdown) continue;
+
+			const relative = path.relative(cwd, fullPath).split(path.sep).join("/");
+			found.add(relative);
+		}
+	}
+
+	return [...found].sort((a, b) => a.localeCompare(b));
+}
+
+async function resolveConvertArg(args: string, ctx: ExtensionCommandContext): Promise<string | null> {
+	const trimmed = args.trim();
+	if (trimmed) return trimmed;
+
+	const usage = "Usage: /ralphi-convert <prd-file>";
+	if (!ctx.hasUI) {
+		ctx.ui.notify(usage, "warning");
+		return null;
+	}
+
+	const prdFiles = listPrdFiles(ctx.cwd);
+	if (prdFiles.length === 0) {
+		ctx.ui.notify("No PRD markdown files found under tasks/ (looking for prd-*.md).", "warning");
+		return null;
+	}
+
+	const selected = await ctx.ui.select("Select PRD file to convert", prdFiles);
+	if (!selected) {
+		ctx.ui.notify("PRD selection cancelled.", "info");
+		return null;
+	}
+	return selected;
+}
+
 export function registerCommands(pi: ExtensionAPI, runtime: RalphiRuntime) {
 	pi.registerCommand("ralphi-init", {
 		description: "Run ralphi-init skill with completion handshake + tree rewind",
@@ -66,12 +122,9 @@ export function registerCommands(pi: ExtensionAPI, runtime: RalphiRuntime) {
 	pi.registerCommand("ralphi-convert", {
 		description: "Run ralphi-convert skill with completion handshake + tree rewind",
 		handler: async (args, ctx) => {
-			const trimmed = args.trim();
-			if (!trimmed) {
-				ctx.ui.notify("Usage: /ralphi-convert <prd-file>", "warning");
-				return;
-			}
-			await runtime.startPhase(ctx, "ralphi-convert", trimmed);
+			const resolved = await resolveConvertArg(args, ctx);
+			if (!resolved) return;
+			await runtime.startPhase(ctx, "ralphi-convert", resolved);
 		},
 	});
 
