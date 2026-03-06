@@ -1,0 +1,179 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { describe, expect, it } from "vitest";
+import { RalphiRuntime } from "../src/runtime";
+import {
+	createMockCommandContext,
+	createMockExtensionApi,
+	createMockSessionManager,
+} from "./factories/pi";
+
+function createTempDir(): string {
+	return fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-guidance-"));
+}
+
+describe("project-local loop guidance", () => {
+	it("supports set/show/clear guidance via runtime command handlers", async () => {
+		const tempDir = createTempDir();
+		try {
+			const sessionManager = createMockSessionManager();
+			const api = createMockExtensionApi(sessionManager);
+			const runtime = new RalphiRuntime(api as any);
+			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+			runtime.showLoopGuidance(ctx as any);
+			expect(ctx.ui.notifications.at(-1)?.message).toContain("No loop guidance configured in .ralphi/config.yaml");
+
+			await runtime.setLoopGuidance(ctx as any, "Always run npm run check before ralphi_phase_done.");
+
+			const configPath = path.join(tempDir, ".ralphi", "config.yaml");
+			expect(fs.existsSync(configPath)).toBe(true);
+			expect(fs.readFileSync(configPath, "utf8")).toContain("Always run npm run check");
+
+			runtime.showLoopGuidance(ctx as any);
+			expect(ctx.ui.notifications.at(-1)?.message).toContain("Always run npm run check");
+
+			runtime.clearLoopGuidance(ctx as any);
+			expect(fs.existsSync(configPath)).toBe(true);
+			expect(fs.readFileSync(configPath, "utf8")).not.toContain("guidance:");
+			expect(ctx.ui.notifications.at(-1)?.message).toContain("Cleared loop guidance in .ralphi/config.yaml");
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("injects loop guidance from .ralphi/config.yaml into loop iteration system prompt when present", async () => {
+		const tempDir = createTempDir();
+		try {
+			fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
+			fs.writeFileSync(
+				path.join(tempDir, ".ralphi", "config.yaml"),
+				[
+					"rules:",
+					'  - "always run tests before commit"',
+					"loop:",
+					'  guidance: "Prefer small commits and include acceptance-criteria mapping in progress.txt."',
+					"  reviewPasses: 1",
+					'  trajectoryGuard: "off"',
+					"",
+				].join("\n"),
+				"utf8",
+			);
+
+			const sessionManager = createMockSessionManager();
+			const api = createMockExtensionApi(sessionManager);
+			const runtime = new RalphiRuntime(api as any);
+			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+			await runtime.startLoop(ctx as any, "--max-iterations 2");
+
+			const injected = runtime.handleBeforeAgentStart({ systemPrompt: "base prompt" } as any, ctx as any);
+			expect(injected).toBeDefined();
+			expect(injected!.systemPrompt).toContain("[PROJECT CONFIG RULES]");
+			expect(injected!.systemPrompt).toContain("always run tests before commit");
+			expect(injected!.systemPrompt).toContain("[PROJECT LOOP GUIDANCE]");
+			expect(injected!.systemPrompt).toContain(".ralphi/config.yaml");
+			expect(injected!.systemPrompt).toContain("Prefer small commits");
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("falls back to default loop prompt when loop guidance is missing", async () => {
+		const tempDir = createTempDir();
+		try {
+			const sessionManager = createMockSessionManager();
+			const api = createMockExtensionApi(sessionManager);
+			const runtime = new RalphiRuntime(api as any);
+			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+			await runtime.startLoop(ctx as any, "--max-iterations 2");
+
+			const injected = runtime.handleBeforeAgentStart({ systemPrompt: "base prompt" } as any, ctx as any);
+			expect(injected).toBeDefined();
+			expect(injected!.systemPrompt).toContain("[RALPHI PHASE]");
+			expect(injected!.systemPrompt).not.toContain("[PROJECT LOOP GUIDANCE]");
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("does not inject loop guidance into non-loop phases", async () => {
+		const tempDir = createTempDir();
+		try {
+			fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
+			fs.writeFileSync(
+				path.join(tempDir, ".ralphi", "config.yaml"),
+				[
+					"rules:",
+					'  - "non-loop rule"',
+					"loop:",
+					'  guidance: "Loop-only guidance"',
+					"  reviewPasses: 1",
+					'  trajectoryGuard: "off"',
+					"",
+				].join("\n"),
+				"utf8",
+			);
+
+			const sessionManager = createMockSessionManager();
+			const api = createMockExtensionApi(sessionManager);
+			const runtime = new RalphiRuntime(api as any);
+			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+			await runtime.startPhase(ctx as any, "ralphi-init", "");
+
+			const injected = runtime.handleBeforeAgentStart({ systemPrompt: "base prompt" } as any, ctx as any);
+			expect(injected).toBeDefined();
+			expect(injected!.systemPrompt).toContain("[PROJECT CONFIG RULES]");
+			expect(injected!.systemPrompt).not.toContain("[PROJECT LOOP GUIDANCE]");
+			expect(injected!.systemPrompt).not.toContain("Loop-only guidance");
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("removes guidance injection after clear + session switch roundtrip", async () => {
+		const tempDir = createTempDir();
+		try {
+			fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
+			fs.writeFileSync(
+				path.join(tempDir, ".ralphi", "config.yaml"),
+				[
+					"loop:",
+					'  guidance: "Keep implementation tightly scoped to one story per iteration."',
+					"  reviewPasses: 1",
+					'  trajectoryGuard: "off"',
+					"",
+				].join("\n"),
+				"utf8",
+			);
+
+			const sessionManager = createMockSessionManager();
+			const api = createMockExtensionApi(sessionManager);
+			const runtime = new RalphiRuntime(api as any);
+			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+			await runtime.startLoop(ctx as any, "--max-iterations 2");
+			const iterationSessionFile = sessionManager.getSessionFile();
+
+			const beforeClear = runtime.handleBeforeAgentStart({ systemPrompt: "base prompt" } as any, ctx as any);
+			expect(beforeClear!.systemPrompt).toContain("Keep implementation tightly scoped");
+
+			runtime.clearLoopGuidance(ctx as any);
+
+			await ctx.switchSession("session-controller.json");
+			runtime.handleSessionSwitch(ctx as any);
+			await ctx.switchSession(iterationSessionFile);
+			runtime.handleSessionSwitch(ctx as any);
+
+			const afterClear = runtime.handleBeforeAgentStart({ systemPrompt: "base prompt" } as any, ctx as any);
+			expect(afterClear).toBeDefined();
+			expect(afterClear!.systemPrompt).not.toContain("[PROJECT LOOP GUIDANCE]");
+			expect(afterClear!.systemPrompt).not.toContain("Keep implementation tightly scoped");
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+});

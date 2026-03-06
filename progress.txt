@@ -6,6 +6,10 @@
 - Multi-select is implemented via iterative `select()` calls with a "Done" sentinel option
 - All quality checks via `npm run check` (lint + typecheck + tests); pre-commit hook enforces this
 - Headless/non-interactive fallback pattern: tools that need UI should accept optional pre-supplied params (`providedAnswers`) and validate them; fail with actionable error + JSON example when neither UI nor pre-supplied params are available
+- Skill-contract testing pattern: for prompt/skill-only behavior changes, add unit tests that read the relevant `skills/**/SKILL.md` file and assert required protocol markers/format fields to prevent accidental prompt regressions
+- Project-local loop guidance pattern: store iteration preferences at `.ralphi/loop-guidance.md`, manage via `/ralphi-loop-guidance-*` commands, and inject only from `handleBeforeAgentStart` when phase is `ralphi-loop-iteration`
+- Optional advanced loop controls pattern: use additive front matter in `.ralphi/loop-guidance.md` (`reviewPasses`, `trajectoryGuard`) so stricter gates are opt-in while default behavior remains unchanged
+- Rollout-safety documentation pattern: capture phase sequencing + go/no-go + rollback policy in `tasks/*.md` and guard it with markdown contract tests under `extensions/ralphi/test`.
 ---
 
 ## 2026-03-04T19:30:00Z - US-001
@@ -77,4 +81,97 @@ Session: N/A
   - Phase-specific kickoff customization pattern: use conditional string appending in `startPhase` based on the phase name
   - System prompt layering: generic tool hints first (for init+prd), then phase-specific guidance on top (for prd only)
   - Skill files can reference tools by name — the agent will pick up the hint from both the skill and the system prompt injection
+---
+
+## 2026-03-05T22:10:29Z - US-001
+Session: N/A
+Review Outcome: PASS
+Trajectory: ON_TRACK
+Trajectory Notes: N/A
+Corrective Plan: N/A
+- Updated `skills/ralphi-loop/SKILL.md` with a required post-implementation step-back review protocol that enforces re-grounding in `prd.json` and `progress.txt`, a deterministic code review pass, and a PRD trajectory check
+- Updated the progress report template in the loop skill to require `Review Outcome`, `Trajectory`, `Trajectory Notes`, and `Corrective Plan` fields
+- Added a focused unit test file validating loop skill protocol and logging format expectations without introducing runtime changes
+- Ran `npm run check` (lint + typecheck + unit tests): all pass
+- Files changed:
+  - `skills/ralphi-loop/SKILL.md`
+  - `extensions/ralphi/test/loop-skill-review-protocol.test.ts`
+  - `prd.json`
+  - `progress.txt`
+- **Learnings for future iterations:**
+  - For prompt-only workflow changes, assertions against `SKILL.md` content provide a low-friction regression safety net while keeping runtime code untouched
+---
+
+## 2026-03-05T22:17:13Z - US-002
+Session: N/A
+Review Outcome: PASS
+Trajectory: ON_TRACK
+Trajectory Notes: N/A
+Corrective Plan: N/A
+- Added project-local loop guidance support via `.ralphi/loop-guidance.md` with runtime loading/injection in `handleBeforeAgentStart` for `ralphi-loop-iteration` only
+- Added loop guidance command handlers in runtime (`showLoopGuidance`, `setLoopGuidance`, `clearLoopGuidance`) and registered new commands: `/ralphi-loop-guidance-show`, `/ralphi-loop-guidance-set`, `/ralphi-loop-guidance-clear`
+- Added focused tests for guidance-present injection, missing-file fallback, non-loop phase isolation, and clear + session-switch cleanup behavior
+- Updated docs and metadata (`README.md`, `AGENTS.md`, `prd.json`, `progress.txt`) to reflect the new guidance workflow and completion state for US-002
+- Ran `npm run check` (lint + typecheck + unit tests): all pass
+- Files changed:
+  - `extensions/ralphi/src/runtime.ts`
+  - `extensions/ralphi/src/commands.ts`
+  - `extensions/ralphi/test/loop-guidance.test.ts`
+  - `extensions/ralphi/test/commands.test.ts`
+  - `README.md`
+  - `AGENTS.md`
+  - `prd.json`
+  - `progress.txt`
+- **Learnings for future iterations:**
+  - Use file-backed project preferences under `.ralphi/` with runtime helper methods so behavior survives session switches without polluting persisted loop state
+  - Keep loop-specific prompt augmentation gated by `run.phase === "ralphi-loop-iteration"` to prevent cross-phase prompt leakage
+---
+
+## 2026-03-05T22:26:30Z - US-003
+Session: N/A
+Review Outcome: PASS
+Trajectory: ON_TRACK
+Trajectory Notes: N/A
+Corrective Plan: N/A
+- Added optional advanced review-pass controls via `.ralphi/loop-guidance.md` front matter parsing in runtime (`reviewPasses`, `trajectoryGuard`) while preserving default lightweight behavior when controls are absent
+- Extended `ralphi_phase_done` with additive optional loop metadata fields (`reviewPasses`, `trajectory`, `trajectoryNotes`, `correctivePlan`) and kept backward compatibility for existing call sites
+- Enforced opt-in loop quality gates: minimum review pass count and DRIFT corrective-plan requirement when `trajectoryGuard: require_corrective_plan` is enabled
+- Added DRIFT corrective-plan signal + next-step guidance in loop completion output and emitted loop progress messages for DRIFT iterations
+- Added dedicated unit tests for default compatibility, opt-in review-pass gating, DRIFT guard enforcement, DRIFT output signaling, and prompt injection hints
+- Ran `npm run check` (lint + typecheck + unit tests): all pass
+- Files changed:
+  - `extensions/ralphi/src/runtime.ts`
+  - `extensions/ralphi/src/tools.ts`
+  - `extensions/ralphi/src/types.ts`
+  - `extensions/ralphi/test/loop-review-controls.test.ts`
+  - `README.md`
+  - `AGENTS.md`
+  - `prd.json`
+  - `progress.txt`
+- **Learnings for future iterations:**
+  - Front-matter-backed controls in existing `.ralphi/*.md` files provide a low-friction path for opt-in strictness without introducing new required config files
+  - Keep stricter loop controls additive and enforce them only at `markPhaseDone` time so iteration startup/default flow remains lightweight
+---
+
+## 2026-03-05T22:28:50Z - US-004
+Session: N/A
+Review Outcome: PASS
+Trajectory: ON_TRACK
+Trajectory Notes: N/A
+Corrective Plan: N/A
+- Documented strict phase sequencing gates with explicit go/no-go criteria and rollback expectations in `tasks/prd-three-phase-loop-guidance-and-step-back-review.md`
+- Added release notes and migration notes for externally visible loop guidance/review behavior changes in both PRD docs and `README.md`
+- Added markdown contract tests to enforce rollout sequencing and release-safety documentation expectations
+- Updated project guidance and tracking artifacts to reflect this reusable rollout-safety pattern
+- Ran `npm run check` (lint + typecheck + unit tests): all pass
+- Files changed:
+  - `tasks/prd-three-phase-loop-guidance-and-step-back-review.md`
+  - `extensions/ralphi/test/sequential-rollout-release-safety.test.ts`
+  - `README.md`
+  - `AGENTS.md`
+  - `prd.json`
+  - `progress.txt`
+- **Learnings for future iterations:**
+  - For governance/process stories, keep rollout policy docs versioned in-repo and protect critical wording with markdown contract tests
+  - Pair release notes and migration notes in both implementation PRD docs and public README so maintainers and users get aligned guidance
 ---

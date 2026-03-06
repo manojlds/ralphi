@@ -19,6 +19,11 @@ rules:
   - "prefer mock-based runtime tests using extensions/ralphi/test/factories/pi.ts"
   - "run npm run check after every code change before finalizing"
 
+loop:
+  guidance: "Take a step back each iteration: review changed code, reassess PRD alignment, and call out risks early."
+  reviewPasses: 1
+  trajectoryGuard: "require_corrective_plan"
+
 boundaries:
   never_touch:
     - "*.lock"

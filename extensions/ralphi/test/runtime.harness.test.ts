@@ -87,6 +87,89 @@ describe("ralphi extension unit-test harness", () => {
 		}
 	});
 
+	it("auto-completes loop immediately when prd.json has no pending stories", async () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-no-pending-"));
+		try {
+			fs.writeFileSync(
+				path.join(tempDir, "prd.json"),
+				JSON.stringify(
+					{
+						project: "ralphi",
+						userStories: [{ id: "US-001", title: "Already done", priority: 1, passes: true }],
+					},
+					null,
+					2,
+				),
+			);
+			fs.writeFileSync(path.join(tempDir, "progress.txt"), "## Codebase Patterns\n---\n", "utf8");
+
+			const sessionManager = createMockSessionManager();
+			const api = createMockExtensionApi(sessionManager);
+			const runtime = new RalphiRuntime(api as any);
+			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+			await runtime.startLoop(ctx as any, "--max-iterations 5");
+
+			expect(ctx.newSessionCalls).toHaveLength(0);
+			expect(api.sendUserMessages.some((m) => m.text.includes("runId:"))).toBe(false);
+			expect(ctx.ui.notifications.some((n) => n.message.includes("complete after 0 iteration(s)"))).toBe(true);
+			const progress = fs.readFileSync(path.join(tempDir, "progress.txt"), "utf8");
+			expect(progress).toContain("Loop Auto-Completion");
+			expect(progress).toContain("No pending PRD stories remain");
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("auto-completes loop after finalize when no pending stories remain", async () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-exhausted-"));
+		try {
+			const prdPath = path.join(tempDir, "prd.json");
+			fs.writeFileSync(
+				prdPath,
+				JSON.stringify(
+					{
+						project: "ralphi",
+						userStories: [{ id: "US-001", title: "Single story", priority: 1, passes: false }],
+					},
+					null,
+					2,
+				),
+			);
+			fs.writeFileSync(path.join(tempDir, "progress.txt"), "## Codebase Patterns\n---\n", "utf8");
+
+			const sessionManager = createMockSessionManager();
+			const api = createMockExtensionApi(sessionManager);
+			const runtime = new RalphiRuntime(api as any);
+			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+			await runtime.startLoop(ctx as any, "--max-iterations 5");
+			const runId = extractRunId(api.sendUserMessages);
+
+			const prd = JSON.parse(fs.readFileSync(prdPath, "utf8"));
+			prd.userStories[0].passes = true;
+			fs.writeFileSync(prdPath, JSON.stringify(prd, null, 2));
+
+			await runtime.markPhaseDone(ctx as any, {
+				runId,
+				phase: "ralphi-loop-iteration",
+				summary: "completed only story",
+				complete: false,
+				outputs: [],
+			});
+			await runtime.finalizeRun(ctx as any, runId);
+
+			expect(ctx.newSessionCalls).toHaveLength(1);
+			expect(api.sendUserMessages.filter((m) => m.text.includes("runId:")).length).toBe(1);
+			expect(ctx.ui.notifications.some((n) => n.message.includes("complete after 1 iteration(s)"))).toBe(true);
+			const progress = fs.readFileSync(path.join(tempDir, "progress.txt"), "utf8");
+			expect(progress).toContain("Loop Auto-Completion");
+			expect(progress).toContain("Iteration count at stop: 1");
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
 	it("continues loop unless ralphi_phase_done sets complete=true", async () => {
 		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-project-"));
 		try {

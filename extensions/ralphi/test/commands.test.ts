@@ -72,6 +72,9 @@ describe("ralphi command behavior", () => {
 			openLoop: vi.fn(),
 			openLoopController: vi.fn(),
 			showLoopStatus: vi.fn(),
+			showLoopGuidance: vi.fn(),
+			setLoopGuidance: vi.fn(),
+			clearLoopGuidance: vi.fn(),
 		};
 		registerCommands(api as any, runtime as any);
 
@@ -84,5 +87,43 @@ describe("ralphi command behavior", () => {
 		expect(ui.inputCalls).toEqual([{ title: "PRD description", placeholder: "Describe the feature to plan" }]);
 		expect(startPhase).not.toHaveBeenCalled();
 		expect(ui.notifications.some((entry) => entry.message.includes("PRD description is required"))).toBe(true);
+	});
+
+	it("registers loop guidance commands that delegate to runtime", async () => {
+		const sessionManager = createMockSessionManager();
+		const api = createMockExtensionApi(sessionManager);
+		const runtime = {
+			startPhase: vi.fn(),
+			finalizeRun: vi.fn(),
+			startLoop: vi.fn(),
+			runLoopIteration: vi.fn(),
+			stopLoop: vi.fn(),
+			openLoop: vi.fn(),
+			openLoopController: vi.fn(),
+			showLoopStatus: vi.fn(),
+			showLoopGuidance: vi.fn(),
+			setLoopGuidance: vi.fn(async () => undefined),
+			clearLoopGuidance: vi.fn(),
+		};
+		registerCommands(api as any, runtime as any);
+
+		const show = api.registeredCommands.get("ralphi-loop-guidance-show") as {
+			handler: (args: string, ctx: any) => Promise<void>;
+		};
+		const set = api.registeredCommands.get("ralphi-loop-guidance-set") as {
+			handler: (args: string, ctx: any) => Promise<void>;
+		};
+		const clear = api.registeredCommands.get("ralphi-loop-guidance-clear") as {
+			handler: (args: string, ctx: any) => Promise<void>;
+		};
+
+		const ctx = createMockCommandContext({ sessionManager });
+		await show.handler("", ctx as any);
+		await set.handler("Prefer focused diffs", ctx as any);
+		await clear.handler("", ctx as any);
+
+		expect(runtime.showLoopGuidance).toHaveBeenCalledWith(ctx);
+		expect(runtime.setLoopGuidance).toHaveBeenCalledWith(ctx, "Prefer focused diffs");
+		expect(runtime.clearLoopGuidance).toHaveBeenCalledWith(ctx);
 	});
 });

@@ -47,6 +47,8 @@ Key behavior:
 - Completion is driven by tool calls via `ralphi_phase_done`
 - Loop completion is **tool-only** (`complete: true`), not marker-text based
 - Loop iteration sessions are named from `prd.json` next pending story when available
+- Optional project-local loop guidance is read from `.ralphi/config.yaml` (`loop.guidance`) and injected only for loop iterations
+- Optional advanced loop review controls can be enabled via `.ralphi/config.yaml` (`loop.reviewPasses`, `loop.trajectoryGuard`)
 
 ## Commands
 
@@ -60,6 +62,9 @@ Key behavior:
 - `/ralphi-loop-open [loopId]` (interactive selector when omitted in TUI)
 - `/ralphi-loop-controller [loopId]` (interactive selector when omitted in TUI)
 - `/ralphi-loop-status`
+- `/ralphi-loop-guidance-show`
+- `/ralphi-loop-guidance-set <guidance>`
+- `/ralphi-loop-guidance-clear`
 
 ## Tool contract
 
@@ -69,11 +74,40 @@ Key behavior:
 - `summary` (required)
 - `outputs` (optional)
 - `complete` (optional, defaults to `false`; set `true` to end loop)
+- `reviewPasses` (optional loop-only metadata; defaults to `1`)
+- `trajectory` (optional loop-only metadata: `ON_TRACK | RISK | DRIFT`)
+- `trajectoryNotes` (optional)
+- `correctivePlan` (optional; required only when strict DRIFT guard is enabled)
 
 `ralphi_ask_user_question`:
 - `questions` (required) — array of structured questions with selectable options
 - Supports single-select and multi-select with optional free-text "Other"
 - Available in init, prd, and convert phases for interactive user input
+
+Advanced review controls (optional):
+
+```yaml
+loop:
+  guidance: "Prefer small, scoped changes per iteration."
+  reviewPasses: 2
+  trajectoryGuard: "require_corrective_plan"
+```
+
+- `loop.reviewPasses` defaults to `1` when omitted
+- `loop.trajectoryGuard` supports `off` (default), `warn_on_drift`, or `require_corrective_plan`
+
+## Release notes (three-phase loop guidance rollout)
+
+- Phase 1 introduced a required loop step-back review protocol and trajectory logging format in `skills/ralphi-loop/SKILL.md`.
+- Phase 2 introduced project-local loop guidance in `.ralphi/config.yaml` (`loop.guidance`) and guidance management commands.
+- Phase 3 introduced optional strict loop review controls via `.ralphi/config.yaml` (`loop.reviewPasses`, `loop.trajectoryGuard`) and additive loop metadata fields in `ralphi_phase_done`.
+
+## Migration notes
+
+- No breaking migration is required; existing loop workflows continue to work without changes.
+- To adopt guidance, add `loop.guidance` to `.ralphi/config.yaml`.
+- To adopt strict controls, set `loop.reviewPasses` and `loop.trajectoryGuard` gradually while keeping defaults for lightweight behavior.
+- To roll back strictness quickly, set `loop.reviewPasses: 1` and `loop.trajectoryGuard: "off"`.
 
 ## CLI
 
