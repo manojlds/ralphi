@@ -6,6 +6,7 @@ import {
 	findLoop,
 	hasRemainingPrdStories,
 	loopOptionLabel,
+	markPrdStoryInProgress,
 	nextPendingStory,
 	sortedLoops,
 } from "./loop-engine";
@@ -16,6 +17,7 @@ import {
 	buildLoopIterationStartingNotice,
 	buildLoopIterationStartingProgress,
 	buildNoPendingStoriesProgress,
+	buildNoSelectableStoryProgress,
 	evaluateLoopIterationGuard,
 } from "./loop-orchestration";
 import type { ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
@@ -153,6 +155,19 @@ export class LoopController {
 			ctx.ui.notify(buildLoopCompleteProgress(loop).replace("✅ ", ""), "info");
 			return;
 		}
+		if (hasRemainingStories === true && !pendingStory) {
+			this.deps.deactivateLoop(loop);
+			this.deps.updateLoopStatusLine(ctx);
+			this.deps.appendRalphiEvent("loop_blocked_no_selectable_story", {
+				loopId: loop.id,
+				iteration: loop.iteration,
+			});
+			this.deps.persistState(ctx);
+			const progress = buildNoSelectableStoryProgress(loop);
+			this.deps.sendProgressMessage(progress, { loopId: loop.id, iteration: loop.iteration });
+			ctx.ui.notify(progress.replace("⏸️ ", ""), "warning");
+			return;
+		}
 
 		this.deps.appendRalphiEvent("loop_iteration_starting", {
 			loopId: loop.id,
@@ -195,11 +210,16 @@ export class LoopController {
 			autoConfirm: true,
 			loopId: loop.id,
 			iteration: loop.iteration,
+			storyId: pendingStory?.id,
+			storyTitle: pendingStory?.title,
 		};
 
 		this.deps.phaseRuns.set(runId, run);
 		this.deps.commandContextByRun.set(runId, ctx);
 		this.deps.activePhaseBySession.set(key, runId);
+		if (pendingStory?.id) {
+			markPrdStoryInProgress(ctx.cwd, this.deps.prdFileName, pendingStory.id);
+		}
 		this.deps.persistState(ctx);
 
 		const reflectionInfo = this.deps.reflectionCheckpointInfo(ctx.cwd, loop.iteration);

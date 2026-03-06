@@ -18,6 +18,7 @@ export type LoopFinalizerDeps = {
 	appendRalphiEvent: (kind: string, data: Record<string, unknown>) => void;
 	sendProgressMessage: (text: string, details?: Record<string, unknown>) => void;
 	runLoopIteration: (ctx: ExtensionCommandContext, loopId: string) => Promise<void>;
+	markStoryDone: (cwd: string, storyId: string) => void;
 };
 
 export class LoopFinalizer {
@@ -65,10 +66,15 @@ export class LoopFinalizer {
 		const iterationElapsed = formatDuration(loop.currentIterationStartedAt, run.completedAt);
 		loop.activeIterationSessionFile = undefined;
 		loop.currentIterationStartedAt = undefined;
+		if (run.storyId) {
+			this.deps.markStoryDone(run.cwd, run.storyId);
+		}
 		this.deps.appendRalphiEvent("loop_iteration_finalized", {
 			loopId: loop.id,
 			runId: run.id,
 			iteration: loop.iteration,
+			storyId: run.storyId,
+			storyTitle: run.storyTitle,
 			sessionFile: run.sessionFile,
 			summary: run.summary,
 			outputs: run.outputs,

@@ -91,6 +91,10 @@ export function buildNoPendingStoriesProgress(loop: LoopRun): string {
 	return `✅ Loop ${loop.id} complete after ${loop.iteration} iteration(s) — no pending PRD stories remain.`;
 }
 
+export function buildNoSelectableStoryProgress(loop: LoopRun): string {
+	return `⏸️ Loop ${loop.id} paused after ${loop.iteration} iteration(s) — pending stories remain but none are currently selectable (likely blocked dependencies).`;
+}
+
 export function buildLoopCompleteProgress(loop: LoopRun): string {
 	return `✅ Loop ${loop.id} complete after ${loop.iteration} iteration(s).`;
 }

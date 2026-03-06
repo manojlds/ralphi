@@ -107,9 +107,9 @@ const SAMPLE_PRD_JSON = JSON.stringify(
 		branchName: "ralph/interactive-qna",
 		description: "Interactive Q&A for init and prd",
 		userStories: [
-			{ id: "US-001", title: "Ask Tool Registration", priority: 1, passes: true, notes: "" },
-			{ id: "US-002", title: "Phase-Scoped Availability", priority: 2, passes: true, notes: "" },
-			{ id: "US-003", title: "Graceful Fallback", priority: 3, passes: false, notes: "" },
+			{ id: "US-001", title: "Ask Tool Registration", priority: 1, status: "done", notes: "" },
+			{ id: "US-002", title: "Phase-Scoped Availability", priority: 2, status: "done", notes: "" },
+			{ id: "US-003", title: "Graceful Fallback", priority: 3, status: "open", notes: "" },
 		],
 	},
 	null,
@@ -299,9 +299,9 @@ describe("parsePrdJson", () => {
 			id: "US-001",
 			title: "Ask Tool Registration",
 			priority: 1,
-			passes: true,
+			done: true,
 		});
-		expect(result!.stories[2].passes).toBe(false);
+		expect(result!.stories[2].done).toBe(false);
 	});
 
 	it("returns null for invalid JSON", () => {
@@ -325,25 +325,39 @@ describe("parsePrdJson", () => {
 	it("defaults priority to 999 for non-numeric values", () => {
 		const result = parsePrdJson(
 			JSON.stringify({
-				userStories: [{ id: "US-001", title: "Story", passes: false }],
+				userStories: [{ id: "US-001", title: "Story", status: "open" }],
 			}),
 		);
 
 		expect(result!.stories[0].priority).toBe(999);
 	});
 
-	it("treats non-true passes as false", () => {
+	it("treats missing or non-done status as not complete", () => {
 		const result = parsePrdJson(
 			JSON.stringify({
 				userStories: [
-					{ id: "US-001", title: "A", passes: "yes" },
-					{ id: "US-002", title: "B", passes: null },
+					{ id: "US-001", title: "A", status: "in_progress" },
+					{ id: "US-002", title: "B", status: "open" },
 					{ id: "US-003", title: "C" },
 				],
 			}),
 		);
 
-		expect(result!.stories.every((s) => s.passes === false)).toBe(true);
+		expect(result!.stories.every((s) => s.done === false)).toBe(true);
+	});
+
+	it("treats status=done as complete", () => {
+		const result = parsePrdJson(
+			JSON.stringify({
+				userStories: [
+					{ id: "US-001", title: "A", status: "done" },
+					{ id: "US-002", title: "B", status: "open" },
+				],
+			}),
+		);
+
+		expect(result!.stories[0].done).toBe(true);
+		expect(result!.stories[1].done).toBe(false);
 	});
 });
 
@@ -573,9 +587,9 @@ describe("buildConvertSummary", () => {
 			project: "test",
 			branchName: "ralph/test",
 			userStories: [
-				{ id: "US-003", title: "Third defined", priority: 3, passes: false },
-				{ id: "US-001", title: "First defined", priority: 1, passes: false },
-				{ id: "US-002", title: "Second defined", priority: 2, passes: false },
+				{ id: "US-003", title: "Third defined", priority: 3, status: "open" },
+				{ id: "US-001", title: "First defined", priority: 1, status: "open" },
+				{ id: "US-002", title: "Second defined", priority: 2, status: "open" },
 			],
 		});
 		writeFile(tempDir, ".ralphi/prd.json", prd);

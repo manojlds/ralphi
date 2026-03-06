@@ -100,7 +100,7 @@ describe("ralphi extension unit-test harness", () => {
 					{
 						project: "ralphi",
 						branchName: "ralph/new-feature",
-						userStories: [{ id: "US-001", title: "Story", priority: 1, passes: false }],
+						userStories: [{ id: "US-001", title: "Story", priority: 1, status: "open" }],
 					},
 					null,
 					2,
@@ -158,7 +158,7 @@ describe("ralphi extension unit-test harness", () => {
 					{
 						project: "ralphi",
 						branchName: "ralph/same-feature",
-						userStories: [{ id: "US-001", title: "Story", priority: 1, passes: false }],
+						userStories: [{ id: "US-001", title: "Story", priority: 1, status: "open" }],
 					},
 					null,
 					2,
@@ -201,7 +201,7 @@ describe("ralphi extension unit-test harness", () => {
 				JSON.stringify(
 					{
 						project: "ralphi",
-						userStories: [{ id: "US-001", title: "Already done", priority: 1, passes: true }],
+						userStories: [{ id: "US-001", title: "Already done", priority: 1, status: "done" }],
 					},
 					null,
 					2,
@@ -237,7 +237,7 @@ describe("ralphi extension unit-test harness", () => {
 				JSON.stringify(
 					{
 						project: "ralphi",
-						userStories: [{ id: "US-001", title: "Single story", priority: 1, passes: false }],
+						userStories: [{ id: "US-001", title: "Single story", priority: 1, status: "open" }],
 					},
 					null,
 					2,
@@ -254,7 +254,7 @@ describe("ralphi extension unit-test harness", () => {
 			const runId = extractRunId(api.sendUserMessages);
 
 			const prd = JSON.parse(fs.readFileSync(prdPath, "utf8"));
-			prd.userStories[0].passes = true;
+			prd.userStories[0].status = "done";
 			fs.writeFileSync(prdPath, JSON.stringify(prd, null, 2));
 
 			await runtime.markPhaseDone(ctx as any, {
@@ -296,7 +296,7 @@ describe("ralphi extension unit-test harness", () => {
 				JSON.stringify(
 					{
 						project: "ralphi",
-						userStories: [{ id: "US-001", title: "Single story", priority: 1, passes: false }],
+						userStories: [{ id: "US-001", title: "Single story", priority: 1, status: "open" }],
 					},
 					null,
 					2,
@@ -313,7 +313,7 @@ describe("ralphi extension unit-test harness", () => {
 			const runId = extractRunId(api.sendUserMessages);
 
 			const prd = JSON.parse(fs.readFileSync(prdPath, "utf8"));
-			prd.userStories[0].passes = true;
+			prd.userStories[0].status = "done";
 			fs.writeFileSync(prdPath, JSON.stringify(prd, null, 2));
 
 			const done = await runtime.markPhaseDone(ctx as any, {
@@ -544,8 +544,8 @@ describe("ralphi extension unit-test harness", () => {
 						branchName: "ralph/story-titles",
 						description: "test",
 						userStories: [
-							{ id: "US-001", title: "Lower priority story", priority: 2, passes: false },
-							{ id: "US-002", title: "Highest priority story", priority: 1, passes: false },
+							{ id: "US-001", title: "Lower priority story", priority: 2, status: "open" },
+							{ id: "US-002", title: "Highest priority story", priority: 1, status: "open" },
 						],
 					},
 					null,
@@ -564,6 +564,86 @@ describe("ralphi extension unit-test harness", () => {
 			// Story suggestion is NOT in kickoff — the skill handles story selection
 			expect(api.sendUserMessages.at(-1)?.text).toContain("ralphi-loop");
 			expect(api.sendUserMessages.at(-1)?.text).not.toContain("Suggested next story");
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("selects highest-priority unblocked story when dependsOn is present", async () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-deps-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
+		try {
+			const prdPath = path.join(tempDir, ".ralphi", "prd.json");
+			fs.writeFileSync(
+				prdPath,
+				JSON.stringify(
+					{
+						project: "ralphi",
+						branchName: "ralph/dependency-order",
+						userStories: [
+							{ id: "US-001", title: "Blocked high priority", priority: 1, status: "open", dependsOn: ["US-002"] },
+							{ id: "US-002", title: "Unblocked second priority", priority: 2, status: "open" },
+						],
+					},
+					null,
+					2,
+				),
+			);
+
+			const sessionManager = createMockSessionManager();
+			const api = createMockExtensionApi(sessionManager);
+			const runtime = new RalphiRuntime(api as any);
+			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+			await runtime.startLoop(ctx as any, "--max-iterations 2");
+
+			expect(api.sessionNames.at(-1)).toContain("US-002 Unblocked second priority");
+			const prd = JSON.parse(fs.readFileSync(prdPath, "utf8"));
+			expect(prd.userStories[1].status).toBe("in_progress");
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("marks selected story as in_progress then done in prd.json during loop execution", async () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-story-status-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
+		try {
+			const prdPath = path.join(tempDir, ".ralphi", "prd.json");
+			fs.writeFileSync(
+				prdPath,
+				JSON.stringify(
+					{
+						project: "ralphi",
+						branchName: "ralph/story-status",
+						userStories: [{ id: "US-001", title: "Only story", priority: 1, status: "open" }],
+					},
+					null,
+					2,
+				),
+			);
+
+			const sessionManager = createMockSessionManager();
+			const api = createMockExtensionApi(sessionManager);
+			const runtime = new RalphiRuntime(api as any);
+			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+			await runtime.startLoop(ctx as any, "--max-iterations 3");
+			let prd = JSON.parse(fs.readFileSync(prdPath, "utf8"));
+			expect(prd.userStories[0].status).toBe("in_progress");
+
+			const runId = extractRunId(api.sendUserMessages);
+			await runtime.markPhaseDone(ctx as any, {
+				runId,
+				phase: "ralphi-loop-iteration",
+				summary: "completed only story",
+				complete: false,
+				outputs: [],
+			});
+			await runtime.finalizeRun(ctx as any, runId);
+
+			prd = JSON.parse(fs.readFileSync(prdPath, "utf8"));
+			expect(prd.userStories[0].status).toBe("done");
 		} finally {
 			fs.rmSync(tempDir, { recursive: true, force: true });
 		}

@@ -48,7 +48,7 @@ import {
 	snapshotPersistedState,
 	writePersistedStateFile,
 } from "./runtime-state";
-import { activeLoop } from "./loop-engine";
+import { activeLoop, markPrdStoryDone } from "./loop-engine";
 import { LoopController } from "./loop-controller";
 import { LoopFinalizer } from "./loop-finalizer";
 import { PhaseController } from "./phase-controller";
@@ -112,6 +112,9 @@ export class RalphiRuntime {
 			appendRalphiEvent: (kind, data) => this.appendRalphiEvent(kind, data),
 			sendProgressMessage: (text, details) => this.sendProgressMessage(text, details),
 			runLoopIteration: (ctx, loopId) => this.loopController.runLoopIteration(ctx, loopId),
+			markStoryDone: (cwd, storyId) => {
+				markPrdStoryDone(cwd, PRD_FILE_NAME, storyId);
+			},
 		});
 		this.phaseController = new PhaseController({
 			phaseRuns: this.phaseRuns,
@@ -174,7 +177,7 @@ export class RalphiRuntime {
 		const progressPath = this.progressFile(cwd);
 		const note = [
 			`## ${new Date().toISOString()} - Loop Auto-Completion (${loopId})`,
-			"- Reason: No pending PRD stories remain (all userStories have passes=true).",
+			"- Reason: No pending PRD stories remain (all stories are status=done).",
 			`- Iteration count at stop: ${iteration}.`,
 			"---",
 		].join("\n");
@@ -917,7 +920,7 @@ export class RalphiRuntime {
 		}
 
 		if (run.phase === "ralphi-loop-iteration") {
-			toolHint += `\n\n[LOOP COMPLETION RULE]\nWhen calling ralphi_phase_done for loop iterations:\n- Set complete=false (or omit complete) while PRD stories remain with passes=false.\n- Set complete=true as soon as no user stories remain with passes=false in ${PRD_FILE_NAME} (or loop goals are fully done).`;
+			toolHint += `\n\n[LOOP COMPLETION RULE]\nWhen calling ralphi_phase_done for loop iterations:\n- Set complete=false (or omit complete) while selectable PRD stories remain open/in_progress.\n- Set complete=true as soon as no user stories remain unfinished (status != done) in ${PRD_FILE_NAME} (or loop goals are fully done).`;
 			if (configData.guidance) {
 				toolHint += `\n\n[PROJECT LOOP GUIDANCE]\nLoop guidance found in ${CONFIG_FILE_PATH} at loop.guidance. Follow these preferences during this loop iteration unless the user explicitly overrides:\n${configData.guidance}`;
 			}

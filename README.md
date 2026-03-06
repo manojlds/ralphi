@@ -21,7 +21,7 @@ Core behavior:
 - Commands are namespaced under `/ralphi-*`
 - Completion is driven by the `ralphi_phase_done` tool
 - Loop iterations run in fresh child sessions
-- `.ralphi/prd.json` is the source of truth for pending stories (`passes: false`)
+- `.ralphi/prd.json` is the source of truth for pending stories (`status != done`)
 - Loop supports explicit completion (`complete: true`) and auto-completes when no pending stories remain
 
 ---
@@ -117,7 +117,7 @@ When you run `/ralphi-loop-start`:
    - `.ralphi/config.yaml`
    - `.ralphi/prd.json`
    - `.ralphi/progress.txt`
-4. It implements the next pending story (`passes: false`) by priority.
+4. It implements the next pending story by priority (`status: open` / `in_progress`).
 5. It signals completion via `ralphi_phase_done`.
 6. Runtime finalizes the iteration and either:
    - starts another iteration, or
@@ -270,11 +270,14 @@ Loop expects stories in `userStories` with:
 - `id`
 - `title`
 - `priority`
-- `passes` (boolean)
+- `status` (`open` | `in_progress` | `done`)
+- `dependsOn` (optional `string[]` of story IDs)
 
-The loop selects highest-priority story where `passes !== true`.
+Selection behavior:
+- Loop selects highest-priority **unblocked** story (dependencies satisfied).
+- It prefers `status: open`, then may resume `status: in_progress`.
 
-When all stories are `passes: true`, loop can terminate.
+When all stories are `status: done`, loop can terminate.
 
 ---
 

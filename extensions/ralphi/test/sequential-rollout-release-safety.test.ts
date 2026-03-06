@@ -20,7 +20,7 @@ describe("US-004: sequential rollout and release safety", () => {
 		expect(prd).toContain("Only after Phase 1 acceptance is complete");
 		expect(prd).toContain("Only after Phase 2 acceptance is complete");
 		expect(prd).toContain("Sequential enforcement policy");
-		expect(prd).toContain("passes: true` in `prd.json`");
+		expect(prd).toContain("status: \"done\"` in `prd.json`");
 	});
 
 	it("documents explicit go/no-go and rollback expectations for each phase", () => {

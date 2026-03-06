@@ -1,6 +1,6 @@
 {
   "name": "@manojlds/ralphi",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Pi-native ralph extension with skill commands and fresh-context loop sessions.",
   "license": "MIT",
   "type": "module",

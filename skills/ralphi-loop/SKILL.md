@@ -20,13 +20,16 @@ Read the `boundaries.never_touch` section in `.ralphi/config.yaml`. Do NOT modif
 1. Read the PRD at `.ralphi/prd.json`
 2. Read the progress log at `.ralphi/progress.txt` (check Codebase Patterns section first)
 3. Check you're on the correct branch from PRD `branchName`. If not, check it out or create from main.
-4. Pick the **highest priority** user story where `passes: false`
+4. Pick the **highest priority unblocked** user story:
+   - Prefer `status: "open"`
+   - If no open stories are available, resume `status: "in_progress"`
 5. Implement that single user story
 6. Run the **REQUIRED Post-Implementation Step-Back Review Protocol** (Section 3)
 7. Run quality checks (see below)
 8. Update AGENTS.md files if you discover reusable patterns (see below)
 9. If checks pass, commit ALL changes with message: `feat: [Story ID] - [Story Title]`
-10. Update the PRD to set `passes: true` for the completed story
+10. Update the PRD for the completed story:
+   - `status: "done"`
 11. Append your progress to `.ralphi/progress.txt`
 
 ## 3. REQUIRED Post-Implementation Step-Back Review Protocol

@@ -74,7 +74,7 @@ The rollout is intentionally sequential:
 | Phase 3 — Optional advanced controls | **Only after Phase 2 acceptance is complete** | Optional front matter controls (`reviewPasses`, `trajectoryGuard`) and DRIFT signaling merged with backward-compatible defaults | Default path no longer backward compatible, required fields become mandatory, or loop completion contract breaks | Revert advanced-control enforcement and keep guidance file body-only behavior |
 
 **Sequential enforcement policy:**
-1. Do not begin implementation for the next phase until all acceptance criteria in the current phase are complete and `passes: true` in `prd.json`.
+1. Do not begin implementation for the next phase until all acceptance criteria in the current phase are complete and the story is `status: "done"` in `prd.json`.
 2. Every phase completion must include a passing `npm run check` run.
 3. If a no-go criterion is hit, execute rollback first, then re-scope before retrying.
 

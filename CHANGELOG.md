@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## [0.6.0] - 2026-03-06
+
+### Release notes (status-only PRD progression)
+
+- Loop story progression is now status-only: `open` → `in_progress` → `done`.
+- Removed runtime fallback behavior that treated legacy `passes` as source-of-truth completion state.
+- Converter/loop skill docs now require `status` + `dependsOn` story metadata.
+
+### Migration notes
+
+- **Breaking behavior change:** update existing `.ralphi/prd.json` stories to use `status` values.
+- Recommended migration: convert `passes: true` stories to `status: "done"`, and all other stories to `status: "open"` (or `"in_progress"` when actively resumed).
+- Legacy `passes` fields are removed from stories as loop iterations update PRD state.
+
 ## [0.5.0] - 2026-03-06
 
 ### Release notes (runtime modularization + timing telemetry)
@@ -58,7 +72,7 @@ All notable changes to this project are documented in this file.
 - Phase 1: required loop step-back review protocol and trajectory logging format in `skills/ralphi-loop/SKILL.md`.
 - Phase 2: project-local loop guidance in `.ralphi/config.yaml` (`loop.guidance`) plus guidance management commands.
 - Phase 3: optional strict review controls in `.ralphi/config.yaml` (`loop.reviewPasses`, `loop.trajectoryGuard`) and additive loop metadata fields in `ralphi_phase_done`.
-- Loop auto-completion when no `prd.json` stories remain with `passes: false`.
+- Loop auto-completion when no unfinished `prd.json` stories remain.
 
 ### Migration notes
 

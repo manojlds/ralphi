@@ -27,7 +27,7 @@ export interface PrdJsonData {
 		id: string;
 		title: string;
 		priority: number;
-		passes: boolean;
+		done: boolean;
 	}>;
 }
 
@@ -132,11 +132,12 @@ export function parsePrdJson(raw: string): PrdJsonData | null {
 		if (Array.isArray(parsed.userStories)) {
 			for (const s of parsed.userStories) {
 				if (!s || typeof s !== "object") continue;
+				const rawStatus = typeof s.status === "string" ? s.status.trim().toLowerCase() : "";
 				stories.push({
 					id: typeof s.id === "string" ? s.id : "",
 					title: typeof s.title === "string" ? s.title : "",
 					priority: typeof s.priority === "number" ? s.priority : 999,
-					passes: s.passes === true,
+					done: rawStatus === "done" || rawStatus === "completed" || rawStatus === "complete",
 				});
 			}
 		}

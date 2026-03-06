@@ -29,6 +29,8 @@ export interface PhaseRun {
 	complete?: boolean;
 	loopId?: string;
 	iteration?: number;
+	storyId?: string;
+	storyTitle?: string;
 	reviewPasses?: number;
 	trajectory?: Trajectory;
 	trajectoryNotes?: string;
