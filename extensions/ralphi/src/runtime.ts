@@ -47,6 +47,20 @@ const DEFAULT_LOOP_REFLECTION_CONFIG: LoopReflectionConfig = {
 	reflectInstructions: null,
 };
 
+const DEFAULT_REFLECTION_QUESTIONS = [
+	"1) Are we still aligned with the active PRD story scope and acceptance criteria?",
+	"2) What risks, blockers, or drift signals are emerging?",
+	"3) What is the smallest high-confidence plan for the next iteration?",
+].join("\n");
+
+type ReflectionCheckpointInfo = {
+	cadence: number;
+	isCheckpoint: boolean;
+	iterationsUntilNext: number;
+	nextCheckpointIteration: number;
+	instructions: string | null;
+};
+
 type PersistedState = {
 	phaseRuns: PhaseRun[];
 	loops: LoopRun[];
@@ -413,6 +427,56 @@ export class RalphiRuntime {
 		return reflection.reflectEvery !== null || Boolean(reflection.reflectInstructions?.trim());
 	}
 
+	private reflectionCheckpointInfo(cwd: string, iteration: number): ReflectionCheckpointInfo | null {
+		const config = this.loadConfigData(cwd);
+		const cadence = config.reflection.reflectEvery;
+		if (!cadence || cadence <= 0) return null;
+
+		const safeIteration = Number.isFinite(iteration) && iteration > 0 ? Math.floor(iteration) : 0;
+		const remainder = safeIteration % cadence;
+		const isCheckpoint = safeIteration > 0 && remainder === 0;
+		const iterationsUntilNext = isCheckpoint || remainder === 0 ? cadence : cadence - remainder;
+		const nextCheckpointIteration = safeIteration + iterationsUntilNext;
+		const instructions = config.reflection.reflectInstructions?.trim() || null;
+
+		return {
+			cadence,
+			isCheckpoint,
+			iterationsUntilNext,
+			nextCheckpointIteration,
+			instructions,
+		};
+	}
+
+	private reflectionCountdownLabel(info: ReflectionCheckpointInfo): string {
+		const unit = info.iterationsUntilNext === 1 ? "iteration" : "iterations";
+		if (info.isCheckpoint) {
+			return `reflection checkpoint now (next in ${info.iterationsUntilNext} ${unit}, iter ${info.nextCheckpointIteration})`;
+		}
+		return `next reflection in ${info.iterationsUntilNext} ${unit} (iter ${info.nextCheckpointIteration})`;
+	}
+
+	private renderReflectionPromptBlock(iteration: number, info: ReflectionCheckpointInfo): string {
+		const lines = [
+			"[REFLECTION CHECKPOINT]",
+			`Iteration ${iteration} hit loop.reflectEvery=${info.cadence}. Run a structured reflection pass before implementation continues.`,
+
+			"",
+			info.instructions
+				? `Project reflection instructions (loop.reflectInstructions):\n${info.instructions}`
+				: "Project reflection instructions (loop.reflectInstructions):\n(default template)",
+			"",
+			"Checkpoint questions (answer explicitly):",
+			DEFAULT_REFLECTION_QUESTIONS,
+			"",
+			"Required outputs before calling ralphi_phase_done:",
+			"- Reflection Summary: concise findings and confidence level",
+			"- Trajectory Decision: ON_TRACK | RISK | DRIFT with rationale",
+			"- Next Iteration Plan: concrete, ordered next steps",
+		];
+		return lines.join("\n");
+	}
+
 	private renderLoopConfigSection(
 		guidance: string | null,
 		controls: LoopReviewControls,
@@ -679,8 +743,10 @@ export class RalphiRuntime {
 		if (!loop) {
 			ctx.ui.setStatus("ralphi-loop", undefined);
 		} else {
-			const suffix = loop.stopRequested ? " · stopping" : "";
-			ctx.ui.setStatus("ralphi-loop", `🔁 ${loop.id} ${loop.iteration}/${loop.maxIterations}${suffix}`);
+			const reflectionInfo = this.reflectionCheckpointInfo(ctx.cwd, loop.iteration);
+			const reflectionSuffix = reflectionInfo ? ` · ${this.reflectionCountdownLabel(reflectionInfo)}` : "";
+			const stoppingSuffix = loop.stopRequested ? " · stopping" : "";
+			ctx.ui.setStatus("ralphi-loop", `🔁 ${loop.id} ${loop.iteration}/${loop.maxIterations}${reflectionSuffix}${stoppingSuffix}`);
 		}
 		this.updatePhaseStatusLine(ctx);
 	}
@@ -1085,20 +1151,27 @@ Run contract for this phase:
 		this.activePhaseBySession.set(key, runId);
 		this.persistState(ctx);
 
+		const reflectionInfo = this.reflectionCheckpointInfo(ctx.cwd, loop.iteration);
+		const reflectionPromptBlock =
+			reflectionInfo?.isCheckpoint ? this.renderReflectionPromptBlock(loop.iteration, reflectionInfo) : null;
 		const kickoff = `Load and execute the ralphi-loop skill now.
 If skill slash commands are available, you may invoke /skill:ralphi-loop.
 
 Loop context:
 - loopId: ${loop.id}
 - runId: ${run.id}
-- iteration: ${loop.iteration}/${loop.maxIterations}`;
+- iteration: ${loop.iteration}/${loop.maxIterations}${reflectionPromptBlock ? `\n\n${reflectionPromptBlock}` : ""}`;
 
 		const storyLabel = pendingStory ? ` — ${pendingStory.id}: ${pendingStory.title}` : "";
+		const reflectionLabel = reflectionInfo?.isCheckpoint ? " · reflection checkpoint" : "";
 		this.sendProgressMessage(
-			`🔁 ${loop.id}: starting iteration ${loop.iteration}/${loop.maxIterations}${storyLabel}`,
-			{ loopId: loop.id, runId, iteration: loop.iteration, storyId: pendingStory?.id },
+			`🔁 ${loop.id}: starting iteration ${loop.iteration}/${loop.maxIterations}${storyLabel}${reflectionLabel}`,
+			{ loopId: loop.id, runId, iteration: loop.iteration, storyId: pendingStory?.id, reflectionCheckpoint: reflectionInfo?.isCheckpoint ?? false },
 		);
-		ctx.ui.notify(`Loop ${loop.id}: starting iteration ${loop.iteration}/${loop.maxIterations}`, "info");
+		ctx.ui.notify(
+			`Loop ${loop.id}: starting iteration ${loop.iteration}/${loop.maxIterations}${reflectionInfo?.isCheckpoint ? " (reflection checkpoint)" : ""}`,
+			"info",
+		);
 		this.updateLoopStatusLine(ctx);
 		this.sendUserMessage(ctx, kickoff, "steer");
 	}
@@ -1233,7 +1306,9 @@ Loop context:
 		if (activeLoops.length > 0) {
 			lines.push("Loops:");
 			for (const loop of activeLoops) {
-				lines.push(`- ${loop.id}: iteration ${loop.iteration}/${loop.maxIterations}${loop.stopRequested ? " (stop requested)" : ""}`);
+				const reflectionInfo = this.reflectionCheckpointInfo(ctx.cwd, loop.iteration);
+				const reflectionSuffix = reflectionInfo ? ` · ${this.reflectionCountdownLabel(reflectionInfo)}` : "";
+				lines.push(`- ${loop.id}: iteration ${loop.iteration}/${loop.maxIterations}${loop.stopRequested ? " (stop requested)" : ""}${reflectionSuffix}`);
 				if (loop.activeIterationSessionFile) {
 					lines.push(`  active iteration session: ${loop.activeIterationSessionFile}`);
 				}
@@ -1602,6 +1677,10 @@ Loop context:
 			}
 			if (this.hasAdvancedReviewControls(configData.controls)) {
 				toolHint += `\n\n[ADVANCED REVIEW CONTROLS]\nOptional project controls are enabled via ${CONFIG_FILE_PATH} under loop.*:\n- reviewPasses: ${configData.controls.reviewPasses}\n- trajectoryGuard: ${configData.controls.trajectoryGuard}\n\nWhen completing loop iterations with ralphi_phase_done, you may include optional fields:\n- reviewPasses (number, defaults to 1 when omitted)\n- trajectory (ON_TRACK | RISK | DRIFT)\n- trajectoryNotes (optional)\n- correctivePlan (required for DRIFT when trajectoryGuard=require_corrective_plan)`;
+			}
+			const reflectionInfo = this.reflectionCheckpointInfo(run.cwd, run.iteration ?? 0);
+			if (reflectionInfo?.isCheckpoint) {
+				toolHint += `\n\n${this.renderReflectionPromptBlock(run.iteration ?? 0, reflectionInfo)}`;
 			}
 		}
 

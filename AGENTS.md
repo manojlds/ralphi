@@ -33,6 +33,7 @@ Individual commands:
 - Keep project-local loop preferences in `.ralphi/config.yaml` (`loop.guidance`) and load them lazily from runtime paths so non-loop phases remain unaffected.
 - For optional loop controls, configure `.ralphi/config.yaml` under `loop.*` (`reviewPasses`, `trajectoryGuard`) so defaults stay lightweight and explicit.
 - When rewriting the `.ralphi/config.yaml` `loop:` section (e.g., guidance set/clear), preserve additive `loop.*` keys (such as `reflectEvery`/`reflectInstructions`) so unrelated project settings are not dropped.
+- Reflection checkpoint pattern: derive cadence from `loop.reflectEvery`, inject `[REFLECTION CHECKPOINT]` prompt blocks only on checkpoint iterations, and surface countdown context in loop status text (`setStatus` + `/ralphi-loop-status`) so operators can see when the next reflection will fire.
 - For rollout/release-safety stories, keep policy in project docs (`tasks/*.md`, `README.md`) and add markdown contract tests so sequencing/go-no-go/rollback guidance does not regress silently.
 
 ## Directory Structure
