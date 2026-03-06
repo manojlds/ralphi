@@ -9,7 +9,9 @@
 - Skill-contract testing pattern: for prompt/skill-only behavior changes, add unit tests that read the relevant `skills/**/SKILL.md` file and assert required protocol markers/format fields to prevent accidental prompt regressions
 - Project-local loop guidance pattern: store iteration preferences at `.ralphi/loop-guidance.md`, manage via `/ralphi-loop-guidance-*` commands, and inject only from `handleBeforeAgentStart` when phase is `ralphi-loop-iteration`
 - Optional advanced loop controls pattern: use additive front matter in `.ralphi/loop-guidance.md` (`reviewPasses`, `trajectoryGuard`) so stricter gates are opt-in while default behavior remains unchanged
-- Rollout-safety documentation pattern: capture phase sequencing + go/no-go + rollback policy in `tasks/*.md` and guard it with markdown contract tests under `extensions/ralphi/test`.
+- Loop config mutation safety pattern: when command helpers rewrite `.ralphi/config.yaml` `loop:` blocks, always preserve additive `loop.*` keys (for example `reflectEvery`, `reflectInstructions`) to avoid silently dropping unrelated settings
+- Reflection checkpoint enforcement pattern: gate checkpoint-only completion requirements in `markPhaseDone` by reusing the shared cadence helper (`reflectionCheckpointInfo`) so validation is deterministic and non-checkpoint/non-loop paths remain unchanged
+- Rollout-safety documentation pattern: capture phase sequencing + go/no-go + rollback/migration policy in `tasks/*.md`, `README.md`, and `CHANGELOG.md`, then guard it with markdown contract tests under `extensions/ralphi/test`.
 ---
 
 ## 2026-03-04T19:30:00Z - US-001
@@ -174,4 +176,192 @@ Corrective Plan: N/A
 - **Learnings for future iterations:**
   - For governance/process stories, keep rollout policy docs versioned in-repo and protect critical wording with markdown contract tests
   - Pair release notes and migration notes in both implementation PRD docs and public README so maintainers and users get aligned guidance
+---
+
+## 2026-03-06T03:48:36Z - US-001
+Session: N/A
+Review Outcome: PASS
+Trajectory: ON_TRACK
+Trajectory Notes: N/A
+Corrective Plan: N/A
+- Extended `.ralphi/config.yaml` loop parsing model to support optional `reflectEvery` and `reflectInstructions` fields while keeping existing `guidance`, `reviewPasses`, and `trajectoryGuard` behavior intact
+- Implemented reflection parsing safeguards: non-positive or malformed `reflectEvery` values are treated as disabled and malformed reflection instruction shapes are ignored without throwing
+- Updated loop guidance config rewrite paths so `/ralphi-loop-guidance-set` and `/ralphi-loop-guidance-clear` preserve additive reflection keys instead of dropping them
+- Added focused tests covering default-disabled reflection settings, configured reflection settings, malformed value tolerance, and config preservation during guidance set/clear flows
+- Ran `npm run check` (lint + typecheck + unit tests): all pass
+- Files changed:
+  - `extensions/ralphi/src/runtime.ts`
+  - `extensions/ralphi/test/loop-reflection-config.test.ts`
+  - `AGENTS.md`
+  - `prd.json`
+  - `progress.txt`
+- **Learnings for future iterations:**
+  - When command helpers rewrite nested config sections, include all known additive keys in the renderer to avoid silently deleting unrelated project settings
+---
+
+## 2026-03-06T03:55:21Z - US-002
+Session: N/A
+Review Outcome: PASS
+Trajectory: ON_TRACK
+Trajectory Notes: N/A
+Corrective Plan: N/A
+- Added reflection checkpoint cadence handling in runtime so loop iterations are classified as checkpoint/non-checkpoint from `loop.reflectEvery`
+- Injected a dedicated `[REFLECTION CHECKPOINT]` prompt block on checkpoint iterations (kickoff + system prompt), including explicit reflection questions and required outputs
+- Wired `loop.reflectInstructions` into checkpoint prompts while preserving default reflection questions/template when custom instructions are absent
+- Extended loop status surfaces (`ui.setStatus` and `/ralphi-loop-status`) to display next-reflection countdown context when cadence is enabled
+- Added targeted unit tests covering checkpoint vs non-checkpoint prompt injection, custom instruction usage, and countdown status behavior
+- Ran `npm run check` (lint + typecheck + unit tests): all pass
+- Files changed:
+  - `extensions/ralphi/src/runtime.ts`
+  - `extensions/ralphi/test/loop-reflection-checkpoints.test.ts`
+  - `AGENTS.md`
+  - `prd.json`
+  - `progress.txt`
+- **Learnings for future iterations:**
+  - For cadence-based loop behaviors, centralize checkpoint math in one runtime helper and reuse it across prompt injection + status rendering to prevent drift
+  - Reflection UX is easier to audit when checkpoint prompts use a stable section marker (`[REFLECTION CHECKPOINT]`) with explicit required output bullets
+---
+
+## 2026-03-06T04:00:27Z - US-003
+Session: N/A
+Review Outcome: PASS
+Trajectory: ON_TRACK
+Trajectory Notes: N/A
+Corrective Plan: N/A
+- Extended `ralphi_phase_done` contract with additive optional checkpoint metadata fields: `reflectionSummary` and `nextIterationPlan`
+- Added checkpoint-only completion validation in `markPhaseDone`: when `loop.reflectEvery` marks the current loop iteration as a reflection checkpoint, missing reflection metadata now fails with actionable guidance and an inline JSON example
+- Kept validation scoped to loop iterations only; init/prd/convert completion paths remain unaffected
+- Updated reflection checkpoint prompt wording to reference exact tool field names so required metadata is explicit at checkpoint time
+- Added focused unit coverage for checkpoint fail/pass behavior, non-checkpoint bypass behavior, non-loop safety, and tool schema field registration
+- Ran `npm run check` (lint + typecheck + unit tests): all pass
+- Files changed:
+  - `extensions/ralphi/src/types.ts`
+  - `extensions/ralphi/src/tools.ts`
+  - `extensions/ralphi/src/runtime.ts`
+  - `extensions/ralphi/test/loop-reflection-metadata.test.ts`
+  - `prd.json`
+  - `progress.txt`
+- **Learnings for future iterations:**
+  - For checkpoint-gated completion rules, validate requirements in `markPhaseDone` (not startup prompts) so enforcement remains deterministic and auditable even if prompt text drifts
+  - Keep checkpoint metadata requirements additive and optional at schema level, then enforce conditionally based on runtime checkpoint state for backward compatibility
+---
+
+## 2026-03-06T04:04:22Z - US-004
+Session: N/A
+Review Outcome: PASS
+Trajectory: ON_TRACK
+Trajectory Notes: N/A
+Corrective Plan: N/A
+- Updated README loop/config documentation with reflection cadence keys (`loop.reflectEvery`, `loop.reflectInstructions`), checkpoint behavior, default-off semantics, and a gradual rollout path
+- Documented checkpoint completion metadata requirements in the `ralphi_phase_done` tool reference (`reflectionSummary`, `nextIterationPlan`)
+- Added changelog release + migration notes for reflection checkpoint documentation rollout
+- Added a markdown contract test to lock README + CHANGELOG reflection documentation expectations
+- Updated shared project guidance (`AGENTS.md` + `progress.txt` Codebase Patterns) to preserve the reusable docs-contract testing pattern for rollout/migration notes
+- Ran `npm run check` (lint + typecheck + unit tests): all pass
+- Ran `npm run build`: pass
+- Files changed:
+  - `README.md`
+  - `CHANGELOG.md`
+  - `extensions/ralphi/test/reflection-docs-migration.test.ts`
+  - `AGENTS.md`
+  - `prd.json`
+  - `progress.txt`
+- **Learnings for future iterations:**
+  - For documentation-focused stories, add lightweight markdown contract tests so key migration language is protected from accidental regressions
+---
+
+## 2026-03-06T04:07:07Z - NO-OPEN-STORIES
+Session: N/A
+Review Outcome: PASS
+Trajectory: ON_TRACK
+Trajectory Notes: N/A
+Corrective Plan: N/A
+- Re-read `prd.json` and confirmed no remaining user stories are pending (`passes: false`), so this iteration was executed as a no-op to avoid out-of-scope changes.
+- Re-read `## Codebase Patterns` and the latest progress entries before deciding no implementation work was required.
+- Verified current branch is `ralph/loop-reflection-checkpoints`, matching `prd.json` `branchName`.
+- Ran `npm run check` (lint + typecheck + unit tests): all pass.
+- Files changed:
+  - `progress.txt`
+- **Learnings for future iterations:**
+  - If all PRD stories already pass, record a no-op iteration explicitly instead of making speculative changes outside defined scope.
+---
+
+## 2026-03-06T04:08:20Z - NO-OPEN-STORIES
+Session: N/A
+Review Outcome: PASS
+Trajectory: ON_TRACK
+Trajectory Notes: N/A
+Corrective Plan: N/A
+- Re-read `prd.json` and confirmed no pending user stories remain (`passes: false`), so no implementation was performed this iteration.
+- Re-read `## Codebase Patterns` and the latest progress entry, then ran a deterministic review pass to ensure no new scope creep was introduced.
+- Verified current branch is `ralph/loop-reflection-checkpoints`, matching `prd.json` `branchName`.
+- Ran `npm run check` (lint + typecheck + unit tests): all pass.
+- Files changed:
+  - `progress.txt`
+- **Learnings for future iterations:**
+  - When the PRD is fully green, treat each loop iteration as an explicit no-op checkpoint and log it with review/trajectory fields for auditability.
+---
+
+## 2026-03-06T04:09:23Z - NO-OPEN-STORIES
+Session: N/A
+Review Outcome: PASS
+Trajectory: ON_TRACK
+Trajectory Notes: N/A
+Corrective Plan: N/A
+- Re-read `prd.json` and confirmed all user stories remain complete (`passes: true`), so no implementation changes were made this iteration.
+- Re-read `## Codebase Patterns` and the latest progress entry to verify no additional reusable pattern updates were needed.
+- Verified current branch is `ralph/loop-reflection-checkpoints`, matching `prd.json` `branchName`.
+- Ran `npm run check` (lint + typecheck + unit tests): all pass.
+- Files changed:
+  - `progress.txt`
+- **Learnings for future iterations:**
+  - Continue treating post-completion loop iterations as explicit audit checkpoints to preserve traceable loop history without introducing scope creep.
+---
+
+## 2026-03-06T04:11:04Z - NO-OPEN-STORIES
+Session: N/A
+Review Outcome: PASS
+Trajectory: ON_TRACK
+Trajectory Notes: N/A
+Corrective Plan: N/A
+- Re-read `prd.json` and confirmed there are still no pending stories (`passes: false`), so this iteration remained a deliberate no-op.
+- Re-read `## Codebase Patterns` and the latest progress entry before deciding no code changes were required.
+- Verified current branch is `ralph/loop-reflection-checkpoints`, matching `prd.json` `branchName`.
+- Ran `npm run check` (lint + typecheck + unit tests): all pass.
+- Files changed:
+  - `progress.txt`
+- **Learnings for future iterations:**
+  - Preserve no-op iteration logs even after PRD completion to keep loop audit trails explicit and chronologically complete.
+---
+
+## 2026-03-06T04:12:15Z - NO-OPEN-STORIES
+Session: N/A
+Review Outcome: PASS
+Trajectory: ON_TRACK
+Trajectory Notes: N/A
+Corrective Plan: N/A
+- Re-read `prd.json` and confirmed there are no remaining `passes: false` stories, so this iteration was executed as a no-op.
+- Re-read `## Codebase Patterns` and the latest progress entry before deciding no code or documentation changes were needed beyond logging this checkpoint.
+- Verified current branch is `ralph/loop-reflection-checkpoints`, matching `prd.json` `branchName`.
+- Ran `npm run check` (lint + typecheck + unit tests): all pass.
+- Files changed:
+  - `progress.txt`
+- **Learnings for future iterations:**
+  - Keep logging explicit no-op iterations after PRD completion so each loop step remains auditable without introducing out-of-scope work.
+---
+
+## 2026-03-06T04:13:54Z - NO-OPEN-STORIES
+Session: N/A
+Review Outcome: PASS
+Trajectory: ON_TRACK
+Trajectory Notes: N/A
+Corrective Plan: N/A
+- Re-read `prd.json` and confirmed there are still no `passes: false` stories, so this final 10/10 iteration remained a deliberate no-op.
+- Re-read `## Codebase Patterns` and the latest progress entry, then performed a deterministic review pass to confirm no unrelated scope changes were introduced.
+- Verified current branch is `ralph/loop-reflection-checkpoints`, matching `prd.json` `branchName`.
+- Ran `npm run check` (lint + typecheck + unit tests): all pass.
+- Files changed:
+  - `progress.txt`
+- **Learnings for future iterations:**
+  - Final loop iterations with no open stories should still be logged as explicit audit checkpoints to keep completion history traceable.
 ---

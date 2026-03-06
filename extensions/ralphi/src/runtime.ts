@@ -37,6 +37,30 @@ const DEFAULT_LOOP_REVIEW_CONTROLS: LoopReviewControls = {
 	trajectoryGuard: "off",
 };
 
+type LoopReflectionConfig = {
+	reflectEvery: number | null;
+	reflectInstructions: string | null;
+};
+
+const DEFAULT_LOOP_REFLECTION_CONFIG: LoopReflectionConfig = {
+	reflectEvery: null,
+	reflectInstructions: null,
+};
+
+const DEFAULT_REFLECTION_QUESTIONS = [
+	"1) Are we still aligned with the active PRD story scope and acceptance criteria?",
+	"2) What risks, blockers, or drift signals are emerging?",
+	"3) What is the smallest high-confidence plan for the next iteration?",
+].join("\n");
+
+type ReflectionCheckpointInfo = {
+	cadence: number;
+	isCheckpoint: boolean;
+	iterationsUntilNext: number;
+	nextCheckpointIteration: number;
+	instructions: string | null;
+};
+
 type PersistedState = {
 	phaseRuns: PhaseRun[];
 	loops: LoopRun[];
@@ -57,6 +81,7 @@ type LoopConfigData = {
 	rules: string[];
 	guidance: string | null;
 	controls: LoopReviewControls;
+	reflection: LoopReflectionConfig;
 };
 
 export class RalphiRuntime {
@@ -249,12 +274,26 @@ export class RalphiRuntime {
 			rules: [],
 			guidance: null,
 			controls: { ...DEFAULT_LOOP_REVIEW_CONTROLS },
+			reflection: { ...DEFAULT_LOOP_REFLECTION_CONFIG },
 		};
 
 		const lines = raw.replace(/\r\n/g, "\n").split("\n");
 		let section = "";
-		let loopGuidanceMode: "none" | "list" | "block" = "none";
+		let loopTextTarget: "none" | "guidance" | "reflectinstructions" = "none";
+		let loopTextMode: "none" | "list" | "block" = "none";
 		const guidanceLines: string[] = [];
+		const reflectInstructionLines: string[] = [];
+
+		const resetLoopTextCapture = () => {
+			loopTextTarget = "none";
+			loopTextMode = "none";
+		};
+
+		const targetTextLines = () => {
+			if (loopTextTarget === "guidance") return guidanceLines;
+			if (loopTextTarget === "reflectinstructions") return reflectInstructionLines;
+			return null;
+		};
 
 		for (const line of lines) {
 			const trimmed = line.trim();
@@ -264,7 +303,7 @@ export class RalphiRuntime {
 			if (indent === 0) {
 				const topLevel = trimmed.match(/^([\w-]+)\s*:\s*(.*)$/);
 				section = topLevel ? topLevel[1] : "";
-				loopGuidanceMode = "none";
+				resetLoopTextCapture();
 				continue;
 			}
 
@@ -280,7 +319,10 @@ export class RalphiRuntime {
 
 			if (indent <= 2) {
 				const kv = trimmed.match(/^([\w-]+)\s*:\s*(.*)$/);
-				if (!kv) continue;
+				if (!kv) {
+					resetLoopTextCapture();
+					continue;
+				}
 
 				const key = kv[1].toLowerCase();
 				const value = kv[2].trim();
@@ -289,48 +331,76 @@ export class RalphiRuntime {
 					if (Number.isFinite(parsed) && parsed > 0) {
 						config.controls.reviewPasses = parsed;
 					}
-					loopGuidanceMode = "none";
+					resetLoopTextCapture();
 					continue;
 				}
 				if (key === "trajectoryguard") {
 					const guard = this.parseTrajectoryGuard(this.unquoteYaml(value));
 					if (guard) config.controls.trajectoryGuard = guard;
-					loopGuidanceMode = "none";
+					resetLoopTextCapture();
 					continue;
 				}
-				if (key === "guidance") {
+				if (key === "reflectevery") {
+					const parsed = Number.parseInt(this.unquoteYaml(value), 10);
+					config.reflection.reflectEvery = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+					resetLoopTextCapture();
+					continue;
+				}
+				if (key === "guidance" || key === "reflectinstructions") {
+					const normalizedKey = key as "guidance" | "reflectinstructions";
 					if (!value) {
-						loopGuidanceMode = "list";
-						guidanceLines.length = 0;
+						loopTextTarget = normalizedKey;
+						loopTextMode = "list";
+						const linesForKey = normalizedKey === "guidance" ? guidanceLines : reflectInstructionLines;
+						linesForKey.length = 0;
 						continue;
 					}
 					if (value === "|" || value === ">") {
-						loopGuidanceMode = "block";
-						guidanceLines.length = 0;
+						loopTextTarget = normalizedKey;
+						loopTextMode = "block";
+						const linesForKey = normalizedKey === "guidance" ? guidanceLines : reflectInstructionLines;
+						linesForKey.length = 0;
 						continue;
 					}
-					config.guidance = this.unquoteYaml(value) || null;
-					loopGuidanceMode = "none";
+
+					const resolved = this.unquoteYaml(value) || null;
+					if (normalizedKey === "guidance") {
+						config.guidance = resolved;
+					} else {
+						config.reflection.reflectInstructions = resolved;
+					}
+					resetLoopTextCapture();
 					continue;
 				}
-				loopGuidanceMode = "none";
+				resetLoopTextCapture();
 				continue;
 			}
 
-			if (loopGuidanceMode === "list") {
+			if (loopTextMode === "list") {
 				const listItem = trimmed.match(/^-\s+(.+)$/);
-				if (listItem) guidanceLines.push(this.unquoteYaml(listItem[1]));
+				if (!listItem) continue;
+				const linesForTarget = targetTextLines();
+				if (linesForTarget) {
+					linesForTarget.push(this.unquoteYaml(listItem[1]));
+				}
 				continue;
 			}
 
-			if (loopGuidanceMode === "block" && indent >= 4) {
-				guidanceLines.push(line.slice(4));
+			if (loopTextMode === "block" && indent >= 4) {
+				const linesForTarget = targetTextLines();
+				if (linesForTarget) {
+					linesForTarget.push(line.slice(4));
+				}
 			}
 		}
 
 		if (!config.guidance && guidanceLines.length > 0) {
 			const compact = guidanceLines.map((part) => part.trim()).filter(Boolean);
 			config.guidance = compact.join("\n") || null;
+		}
+		if (!config.reflection.reflectInstructions && reflectInstructionLines.length > 0) {
+			const compact = reflectInstructionLines.map((part) => part.trim()).filter(Boolean);
+			config.reflection.reflectInstructions = compact.join("\n") || null;
 		}
 
 		return config;
@@ -343,6 +413,7 @@ export class RalphiRuntime {
 				rules: [],
 				guidance: null,
 				controls: { ...DEFAULT_LOOP_REVIEW_CONTROLS },
+				reflection: { ...DEFAULT_LOOP_REFLECTION_CONFIG },
 			};
 		}
 		return this.parseConfigYaml(raw);
@@ -352,13 +423,77 @@ export class RalphiRuntime {
 		return controls.reviewPasses > 1 || controls.trajectoryGuard !== "off";
 	}
 
-	private renderLoopConfigSection(guidance: string | null, controls: LoopReviewControls): string[] {
+	private hasReflectionConfig(reflection: LoopReflectionConfig): boolean {
+		return reflection.reflectEvery !== null || Boolean(reflection.reflectInstructions?.trim());
+	}
+
+	private reflectionCheckpointInfo(cwd: string, iteration: number): ReflectionCheckpointInfo | null {
+		const config = this.loadConfigData(cwd);
+		const cadence = config.reflection.reflectEvery;
+		if (!cadence || cadence <= 0) return null;
+
+		const safeIteration = Number.isFinite(iteration) && iteration > 0 ? Math.floor(iteration) : 0;
+		const remainder = safeIteration % cadence;
+		const isCheckpoint = safeIteration > 0 && remainder === 0;
+		const iterationsUntilNext = isCheckpoint || remainder === 0 ? cadence : cadence - remainder;
+		const nextCheckpointIteration = safeIteration + iterationsUntilNext;
+		const instructions = config.reflection.reflectInstructions?.trim() || null;
+
+		return {
+			cadence,
+			isCheckpoint,
+			iterationsUntilNext,
+			nextCheckpointIteration,
+			instructions,
+		};
+	}
+
+	private reflectionCountdownLabel(info: ReflectionCheckpointInfo): string {
+		const unit = info.iterationsUntilNext === 1 ? "iteration" : "iterations";
+		if (info.isCheckpoint) {
+			return `reflection checkpoint now (next in ${info.iterationsUntilNext} ${unit}, iter ${info.nextCheckpointIteration})`;
+		}
+		return `next reflection in ${info.iterationsUntilNext} ${unit} (iter ${info.nextCheckpointIteration})`;
+	}
+
+	private renderReflectionPromptBlock(iteration: number, info: ReflectionCheckpointInfo): string {
+		const lines = [
+			"[REFLECTION CHECKPOINT]",
+			`Iteration ${iteration} hit loop.reflectEvery=${info.cadence}. Run a structured reflection pass before implementation continues.`,
+
+			"",
+			info.instructions
+				? `Project reflection instructions (loop.reflectInstructions):\n${info.instructions}`
+				: "Project reflection instructions (loop.reflectInstructions):\n(default template)",
+			"",
+			"Checkpoint questions (answer explicitly):",
+			DEFAULT_REFLECTION_QUESTIONS,
+			"",
+			"Required outputs before calling ralphi_phase_done:",
+			"- reflectionSummary: concise findings and confidence level",
+			"- trajectory: ON_TRACK | RISK | DRIFT (with trajectoryNotes for RISK/DRIFT)",
+			"- nextIterationPlan: concrete, ordered next steps",
+		];
+		return lines.join("\n");
+	}
+
+	private renderLoopConfigSection(
+		guidance: string | null,
+		controls: LoopReviewControls,
+		reflection: LoopReflectionConfig,
+	): string[] {
 		const lines: string[] = ["loop:"];
 		if (guidance && guidance.trim().length > 0) {
 			lines.push(`  guidance: ${JSON.stringify(guidance.trim())}`);
 		}
 		lines.push(`  reviewPasses: ${controls.reviewPasses}`);
 		lines.push(`  trajectoryGuard: ${JSON.stringify(controls.trajectoryGuard)}`);
+		if (reflection.reflectEvery !== null) {
+			lines.push(`  reflectEvery: ${reflection.reflectEvery}`);
+		}
+		if (reflection.reflectInstructions && reflection.reflectInstructions.trim().length > 0) {
+			lines.push(`  reflectInstructions: ${JSON.stringify(reflection.reflectInstructions.trim())}`);
+		}
 		return lines;
 	}
 
@@ -608,8 +743,10 @@ export class RalphiRuntime {
 		if (!loop) {
 			ctx.ui.setStatus("ralphi-loop", undefined);
 		} else {
-			const suffix = loop.stopRequested ? " · stopping" : "";
-			ctx.ui.setStatus("ralphi-loop", `🔁 ${loop.id} ${loop.iteration}/${loop.maxIterations}${suffix}`);
+			const reflectionInfo = this.reflectionCheckpointInfo(ctx.cwd, loop.iteration);
+			const reflectionSuffix = reflectionInfo ? ` · ${this.reflectionCountdownLabel(reflectionInfo)}` : "";
+			const stoppingSuffix = loop.stopRequested ? " · stopping" : "";
+			ctx.ui.setStatus("ralphi-loop", `🔁 ${loop.id} ${loop.iteration}/${loop.maxIterations}${reflectionSuffix}${stoppingSuffix}`);
 		}
 		this.updatePhaseStatusLine(ctx);
 	}
@@ -735,6 +872,8 @@ export class RalphiRuntime {
 			trajectory: run.trajectory,
 			trajectoryNotes: run.trajectoryNotes,
 			correctivePlan: run.correctivePlan,
+			reflectionSummary: run.reflectionSummary,
+			nextIterationPlan: run.nextIterationPlan,
 		});
 		this.sendProgressMessage(
 			`🔁 ${loop.id}: iteration ${loop.iteration}/${loop.maxIterations} finalized — ${run.summary ?? "(no summary)"}`,
@@ -1014,20 +1153,27 @@ Run contract for this phase:
 		this.activePhaseBySession.set(key, runId);
 		this.persistState(ctx);
 
+		const reflectionInfo = this.reflectionCheckpointInfo(ctx.cwd, loop.iteration);
+		const reflectionPromptBlock =
+			reflectionInfo?.isCheckpoint ? this.renderReflectionPromptBlock(loop.iteration, reflectionInfo) : null;
 		const kickoff = `Load and execute the ralphi-loop skill now.
 If skill slash commands are available, you may invoke /skill:ralphi-loop.
 
 Loop context:
 - loopId: ${loop.id}
 - runId: ${run.id}
-- iteration: ${loop.iteration}/${loop.maxIterations}`;
+- iteration: ${loop.iteration}/${loop.maxIterations}${reflectionPromptBlock ? `\n\n${reflectionPromptBlock}` : ""}`;
 
 		const storyLabel = pendingStory ? ` — ${pendingStory.id}: ${pendingStory.title}` : "";
+		const reflectionLabel = reflectionInfo?.isCheckpoint ? " · reflection checkpoint" : "";
 		this.sendProgressMessage(
-			`🔁 ${loop.id}: starting iteration ${loop.iteration}/${loop.maxIterations}${storyLabel}`,
-			{ loopId: loop.id, runId, iteration: loop.iteration, storyId: pendingStory?.id },
+			`🔁 ${loop.id}: starting iteration ${loop.iteration}/${loop.maxIterations}${storyLabel}${reflectionLabel}`,
+			{ loopId: loop.id, runId, iteration: loop.iteration, storyId: pendingStory?.id, reflectionCheckpoint: reflectionInfo?.isCheckpoint ?? false },
 		);
-		ctx.ui.notify(`Loop ${loop.id}: starting iteration ${loop.iteration}/${loop.maxIterations}`, "info");
+		ctx.ui.notify(
+			`Loop ${loop.id}: starting iteration ${loop.iteration}/${loop.maxIterations}${reflectionInfo?.isCheckpoint ? " (reflection checkpoint)" : ""}`,
+			"info",
+		);
 		this.updateLoopStatusLine(ctx);
 		this.sendUserMessage(ctx, kickoff, "steer");
 	}
@@ -1162,7 +1308,9 @@ Loop context:
 		if (activeLoops.length > 0) {
 			lines.push("Loops:");
 			for (const loop of activeLoops) {
-				lines.push(`- ${loop.id}: iteration ${loop.iteration}/${loop.maxIterations}${loop.stopRequested ? " (stop requested)" : ""}`);
+				const reflectionInfo = this.reflectionCheckpointInfo(ctx.cwd, loop.iteration);
+				const reflectionSuffix = reflectionInfo ? ` · ${this.reflectionCountdownLabel(reflectionInfo)}` : "";
+				lines.push(`- ${loop.id}: iteration ${loop.iteration}/${loop.maxIterations}${loop.stopRequested ? " (stop requested)" : ""}${reflectionSuffix}`);
 				if (loop.activeIterationSessionFile) {
 					lines.push(`  active iteration session: ${loop.activeIterationSessionFile}`);
 				}
@@ -1183,7 +1331,9 @@ Loop context:
 
 	showLoopGuidance(ctx: ExtensionCommandContext) {
 		const config = this.loadConfigData(ctx.cwd);
-		if (!config.guidance) {
+		const hasReflection = this.hasReflectionConfig(config.reflection);
+		const hasAdvancedControls = this.hasAdvancedReviewControls(config.controls);
+		if (!config.guidance && !hasReflection && !hasAdvancedControls) {
 			ctx.ui.notify(`No loop guidance configured in ${CONFIG_FILE_PATH} (loop.guidance).`, "info");
 			return;
 		}
@@ -1191,10 +1341,12 @@ Loop context:
 		ctx.ui.notify(
 			[
 				`Loop guidance (${CONFIG_FILE_PATH}):`,
-				config.guidance,
+				config.guidance ?? "(none)",
 				"",
 				`reviewPasses: ${config.controls.reviewPasses}`,
 				`trajectoryGuard: ${config.controls.trajectoryGuard}`,
+				`reflectEvery: ${config.reflection.reflectEvery ?? "disabled"}`,
+				`reflectInstructions: ${config.reflection.reflectInstructions?.trim() || "(default)"}`,
 			].join("\n"),
 			"info",
 		);
@@ -1218,8 +1370,11 @@ Loop context:
 
 		const configFile = this.configFile(ctx.cwd);
 		const existingRaw = this.readConfigYaml(ctx.cwd) ?? "";
-		const controls = this.loadConfigData(ctx.cwd).controls;
-		const updated = this.upsertLoopSection(existingRaw, this.renderLoopConfigSection(guidance, controls));
+		const configData = this.loadConfigData(ctx.cwd);
+		const updated = this.upsertLoopSection(
+			existingRaw,
+			this.renderLoopConfigSection(guidance, configData.controls, configData.reflection),
+		);
 		fs.mkdirSync(path.dirname(configFile), { recursive: true });
 		fs.writeFileSync(configFile, updated, "utf8");
 		ctx.ui.notify(`Saved loop guidance to ${CONFIG_FILE_PATH} (loop.guidance).`, "info");
@@ -1233,11 +1388,14 @@ Loop context:
 		}
 
 		const existingRaw = this.readConfigYaml(ctx.cwd) ?? "";
-		const controls = this.loadConfigData(ctx.cwd).controls;
-		const keepControls = this.hasAdvancedReviewControls(controls);
+		const configData = this.loadConfigData(ctx.cwd);
+		const keepControls = this.hasAdvancedReviewControls(configData.controls);
+		const keepReflection = this.hasReflectionConfig(configData.reflection);
 		const updated = this.upsertLoopSection(
 			existingRaw,
-			keepControls ? this.renderLoopConfigSection(null, controls) : null,
+			keepControls || keepReflection
+				? this.renderLoopConfigSection(null, configData.controls, configData.reflection)
+				: null,
 		);
 		fs.writeFileSync(configFile, updated, "utf8");
 		ctx.ui.notify(`Cleared loop guidance in ${CONFIG_FILE_PATH}.`, "info");
@@ -1316,6 +1474,28 @@ Loop context:
 		return { ok: true };
 	}
 
+	private validateLoopReflectionCheckpointMetadata(run: PhaseRun, params: PhaseDoneInput): { ok: true } | { ok: false; text: string } {
+		if (run.phase !== "ralphi-loop-iteration") return { ok: true };
+
+		const reflectionInfo = this.reflectionCheckpointInfo(run.cwd, run.iteration ?? 0);
+		if (!reflectionInfo?.isCheckpoint) return { ok: true };
+
+		const missingFields: string[] = [];
+		if (!params.reflectionSummary?.trim()) missingFields.push("reflectionSummary");
+		if (!params.nextIterationPlan?.trim()) missingFields.push("nextIterationPlan");
+		if (missingFields.length === 0) return { ok: true };
+
+		const iterationLabel = Number.isFinite(run.iteration) ? run.iteration : "?";
+		return {
+			ok: false,
+			text:
+				`Reflection checkpoint requirements not met for ${run.id} (iteration ${iterationLabel}, loop.reflectEvery=${reflectionInfo.cadence}). ` +
+				`Missing required field(s): ${missingFields.join(", ")}. ` +
+				"Provide these fields in ralphi_phase_done, then retry. " +
+				"Example: { \"reflectionSummary\": \"Key findings + confidence\", \"nextIterationPlan\": \"1) ... 2) ...\" }",
+		};
+	}
+
 	private driftCompletionGuidance(run: PhaseRun): string | null {
 		if (run.phase !== "ralphi-loop-iteration" || run.trajectory !== "DRIFT") return null;
 		const plan = run.correctivePlan?.trim();
@@ -1347,6 +1527,11 @@ Loop context:
 			return { ok: false, text: controlValidation.text };
 		}
 
+		const reflectionValidation = this.validateLoopReflectionCheckpointMetadata(run, params);
+		if (!reflectionValidation.ok) {
+			return { ok: false, text: reflectionValidation.text };
+		}
+
 		run.summary = params.summary;
 		run.outputs = params.outputs ?? [];
 		run.complete = params.complete ?? false;
@@ -1354,6 +1539,8 @@ Loop context:
 		run.trajectory = params.trajectory;
 		run.trajectoryNotes = params.trajectoryNotes?.trim() || undefined;
 		run.correctivePlan = params.correctivePlan?.trim() || undefined;
+		run.reflectionSummary = params.reflectionSummary?.trim() || undefined;
+		run.nextIterationPlan = params.nextIterationPlan?.trim() || undefined;
 		run.status = "awaiting_finalize";
 		this.activePhaseBySession.delete(run.sessionKey);
 		this.appendRalphiEvent("phase_done_called", {
@@ -1366,6 +1553,8 @@ Loop context:
 			trajectory: run.trajectory,
 			trajectoryNotes: run.trajectoryNotes,
 			correctivePlan: run.correctivePlan,
+			reflectionSummary: run.reflectionSummary,
+			nextIterationPlan: run.nextIterationPlan,
 		});
 		this.persistState(ctx);
 
@@ -1521,6 +1710,10 @@ Loop context:
 			}
 			if (this.hasAdvancedReviewControls(configData.controls)) {
 				toolHint += `\n\n[ADVANCED REVIEW CONTROLS]\nOptional project controls are enabled via ${CONFIG_FILE_PATH} under loop.*:\n- reviewPasses: ${configData.controls.reviewPasses}\n- trajectoryGuard: ${configData.controls.trajectoryGuard}\n\nWhen completing loop iterations with ralphi_phase_done, you may include optional fields:\n- reviewPasses (number, defaults to 1 when omitted)\n- trajectory (ON_TRACK | RISK | DRIFT)\n- trajectoryNotes (optional)\n- correctivePlan (required for DRIFT when trajectoryGuard=require_corrective_plan)`;
+			}
+			const reflectionInfo = this.reflectionCheckpointInfo(run.cwd, run.iteration ?? 0);
+			if (reflectionInfo?.isCheckpoint) {
+				toolHint += `\n\n${this.renderReflectionPromptBlock(run.iteration ?? 0, reflectionInfo)}`;
 			}
 		}
 
