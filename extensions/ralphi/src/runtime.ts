@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -87,6 +88,7 @@ export class RalphiRuntime {
 			sendProgressMessage: (text, details) => this.sendProgressMessage(text, details),
 			sendUserMessage: (ctx, text, deliveryWhenBusy) => this.sendUserMessage(ctx, text, deliveryWhenBusy),
 			appendLoopAutoCompletionNote: (cwd, loopId, iteration) => this.appendLoopAutoCompletionNote(cwd, loopId, iteration),
+			ensureLoopBranch: (ctx) => this.ensureLoopBranch(ctx),
 			ensureProgressFileForCurrentPrd: (cwd) => this.ensureProgressFileForCurrentPrd(cwd),
 			reflectionCheckpointInfo: (cwd, iteration) => this.reflectionCheckpointInfo(cwd, iteration),
 			renderReflectionPromptBlock: (iteration, info) => this.renderReflectionPromptBlock(iteration, info),
@@ -240,6 +242,118 @@ export class RalphiRuntime {
 		} catch {
 			return null;
 		}
+	}
+
+	private runGit(cwd: string, args: string[]): { ok: boolean; stdout: string; stderr: string } {
+		const result = spawnSync("git", args, {
+			cwd,
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+		return {
+			ok: result.status === 0,
+			stdout: result.stdout ?? "",
+			stderr: result.stderr ?? "",
+		};
+	}
+
+	private isGitRepository(cwd: string): boolean {
+		const result = this.runGit(cwd, ["rev-parse", "--is-inside-work-tree"]);
+		return result.ok && result.stdout.trim() === "true";
+	}
+
+	private currentGitBranch(cwd: string): string | null {
+		const result = this.runGit(cwd, ["branch", "--show-current"]);
+		if (!result.ok) return null;
+		const branch = result.stdout.trim();
+		return branch.length > 0 ? branch : null;
+	}
+
+	private localBranchExists(cwd: string, branchName: string): boolean {
+		if (!branchName.trim()) return false;
+		return this.runGit(cwd, ["show-ref", "--verify", "--quiet", `refs/heads/${branchName}`]).ok;
+	}
+
+	private switchToBranch(cwd: string, branchName: string): boolean {
+		const switched = this.runGit(cwd, ["switch", branchName]);
+		if (switched.ok) return true;
+		return this.runGit(cwd, ["checkout", branchName]).ok;
+	}
+
+	private createBranchFrom(cwd: string, branchName: string, baseBranch: string): boolean {
+		const created = this.runGit(cwd, ["switch", "-c", branchName, baseBranch]);
+		if (created.ok) return true;
+		return this.runGit(cwd, ["checkout", "-b", branchName, baseBranch]).ok;
+	}
+
+	private async chooseBranchBase(
+		ctx: ExtensionCommandContext,
+		targetBranch: string,
+		currentBranch: string | null,
+	): Promise<string | null> {
+		const mainExists = this.localBranchExists(ctx.cwd, "main");
+		const options: Array<{ label: string; value: string }> = [];
+
+		if (mainExists) {
+			options.push({ label: "main (recommended)", value: "main" });
+		}
+		if (currentBranch) {
+			const alreadyListed = options.some((option) => option.value === currentBranch);
+			if (!alreadyListed) {
+				options.push({ label: `${currentBranch} (current branch)`, value: currentBranch });
+			}
+		}
+
+		if (options.length === 0) return null;
+		if (!ctx.hasUI || options.length === 1) return options[0].value;
+
+		const labels = options.map((option) => option.label);
+		const selected = await ctx.ui.select(
+			`Branch '${targetBranch}' does not exist. Create it from which base branch?`,
+			labels,
+		);
+		if (!selected) return null;
+		const matched = options.find((option) => option.label === selected);
+		return matched?.value ?? null;
+	}
+
+	private async ensureLoopBranch(ctx: ExtensionCommandContext): Promise<boolean> {
+		const targetBranch = this.readPrdBranchName(ctx.cwd);
+		if (!targetBranch) return true;
+
+		if (!this.isGitRepository(ctx.cwd)) {
+			ctx.ui.notify(
+				`No git repository detected in ${ctx.cwd}; cannot enforce PRD branch '${targetBranch}' automatically.`,
+				"warning",
+			);
+			return true;
+		}
+
+		const currentBranch = this.currentGitBranch(ctx.cwd);
+		if (currentBranch === targetBranch) return true;
+
+		if (this.localBranchExists(ctx.cwd, targetBranch)) {
+			if (!this.switchToBranch(ctx.cwd, targetBranch)) {
+				ctx.ui.notify(`Failed to switch to PRD branch '${targetBranch}'.`, "error");
+				return false;
+			}
+			ctx.ui.notify(`Switched to PRD branch '${targetBranch}'.`, "info");
+			return true;
+		}
+
+		const baseBranch = await this.chooseBranchBase(ctx, targetBranch, currentBranch);
+		if (!baseBranch) {
+			ctx.ui.notify(`Loop start cancelled: unable to choose a base branch for '${targetBranch}'.`, "warning");
+			return false;
+		}
+
+		if (!this.createBranchFrom(ctx.cwd, targetBranch, baseBranch)) {
+			ctx.ui.notify(`Failed to create branch '${targetBranch}' from '${baseBranch}'.`, "error");
+			return false;
+		}
+
+		ctx.ui.notify(`Created and switched to '${targetBranch}' from '${baseBranch}'.`, "info");
+		return true;
 	}
 
 	private readLastBranchName(cwd: string): string | null {

@@ -19,7 +19,7 @@ Read the `boundaries.never_touch` section in `.ralphi/config.yaml`. Do NOT modif
 
 1. Read the PRD at `.ralphi/prd.json`
 2. Read the progress log at `.ralphi/progress.txt` (check Codebase Patterns section first)
-3. Check you're on the correct branch from PRD `branchName`. If not, check it out or create from main.
+3. Confirm the target story context in PRD (runtime already handles branch checkout/creation from PRD `branchName` before iteration starts).
 4. Pick the **highest priority unblocked** user story:
    - Prefer `status: "open"`
    - If no open stories are available, resume `status: "in_progress"`

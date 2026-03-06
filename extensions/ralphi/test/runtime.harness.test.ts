@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -20,6 +21,14 @@ function extractLoopId(messages: Array<{ text: string }>): string {
 	const match = kickoff?.text.match(/loopId: (loop-[a-f0-9]+)/);
 	if (!match) throw new Error("loopId not found in messages");
 	return match[1];
+}
+
+function runGit(cwd: string, command: string) {
+	execSync(command, { cwd, stdio: "pipe" });
+}
+
+function currentBranch(cwd: string): string {
+	return execSync("git branch --show-current", { cwd, stdio: "pipe" }).toString().trim();
 }
 
 /** Helper: create a runtime with session_switch events wired up (simulates real Pi) */
@@ -84,6 +93,99 @@ describe("ralphi extension unit-test harness", () => {
 			expect(kickoff!.text).toContain("iteration: 1/2");
 			// Should have created a child session
 			expect(ctx.newSessionCalls).toHaveLength(1);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("switches to existing PRD branch before starting loop iterations", async () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-branch-switch-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
+		try {
+			runGit(tempDir, "git init");
+			runGit(tempDir, "git checkout -b main");
+			runGit(tempDir, "git config user.email 'test@example.com'");
+			runGit(tempDir, "git config user.name 'Test User'");
+			fs.writeFileSync(path.join(tempDir, "README.md"), "# test\n", "utf8");
+			runGit(tempDir, "git add README.md");
+			runGit(tempDir, "git commit -m 'init'");
+			runGit(tempDir, "git checkout -b ralph/existing-feature");
+			runGit(tempDir, "git checkout main");
+
+			fs.writeFileSync(
+				path.join(tempDir, ".ralphi", "prd.json"),
+				JSON.stringify(
+					{
+						project: "ralphi",
+						branchName: "ralph/existing-feature",
+						userStories: [{ id: "US-001", title: "Story", priority: 1, status: "open" }],
+					},
+					null,
+					2,
+				),
+				"utf8",
+			);
+
+			const sessionManager = createMockSessionManager();
+			const api = createMockExtensionApi(sessionManager);
+			const ui = createMockUi();
+			const runtime = new RalphiRuntime(api as any);
+			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir, ui });
+
+			await runtime.startLoop(ctx as any, "--max-iterations 2");
+
+			expect(currentBranch(tempDir)).toBe("ralph/existing-feature");
+			expect(ui.selectCalls).toHaveLength(0);
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("asks for base branch when PRD branch is missing and creates from selected base", async () => {
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ralphi-loop-branch-create-"));
+		fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
+		try {
+			runGit(tempDir, "git init");
+			runGit(tempDir, "git checkout -b main");
+			runGit(tempDir, "git config user.email 'test@example.com'");
+			runGit(tempDir, "git config user.name 'Test User'");
+			fs.writeFileSync(path.join(tempDir, "README.md"), "# test\n", "utf8");
+			runGit(tempDir, "git add README.md");
+			runGit(tempDir, "git commit -m 'init'");
+			runGit(tempDir, "git checkout -b dev");
+			fs.writeFileSync(path.join(tempDir, "only-dev.txt"), "dev-only\n", "utf8");
+			runGit(tempDir, "git add only-dev.txt");
+			runGit(tempDir, "git commit -m 'dev commit'");
+
+			fs.writeFileSync(
+				path.join(tempDir, ".ralphi", "prd.json"),
+				JSON.stringify(
+					{
+						project: "ralphi",
+						branchName: "ralph/from-current",
+						userStories: [{ id: "US-001", title: "Story", priority: 1, status: "open" }],
+					},
+					null,
+					2,
+				),
+				"utf8",
+			);
+
+			const sessionManager = createMockSessionManager();
+			const api = createMockExtensionApi(sessionManager);
+			const ui = createMockUi();
+			ui.select = async (title, options) => {
+				ui.selectCalls.push({ title, options });
+				return options.find((option) => option.includes("current branch"));
+			};
+			const runtime = new RalphiRuntime(api as any);
+			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir, ui });
+
+			await runtime.startLoop(ctx as any, "--max-iterations 2");
+
+			expect(ui.selectCalls).toHaveLength(1);
+			expect(currentBranch(tempDir)).toBe("ralph/from-current");
+			expect(fs.existsSync(path.join(tempDir, "only-dev.txt"))).toBe(true);
 		} finally {
 			fs.rmSync(tempDir, { recursive: true, force: true });
 		}

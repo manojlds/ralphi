@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## [0.6.3] - 2026-03-06
+
+### Release notes (runtime branch orchestration)
+
+- Moved PRD branch management from loop skill prompts into runtime.
+- On `/ralphi-loop-start`, runtime now:
+  - switches to existing PRD `branchName`, or
+  - prompts in TUI to create missing branch from `main` or current branch.
+
 ## [0.6.2] - 2026-03-06
 
 ### Release notes (command wording cleanup)
