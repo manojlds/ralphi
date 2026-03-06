@@ -44,13 +44,18 @@ describe("optional advanced loop review controls", () => {
 		}
 	});
 
-	it("enforces opt-in reviewPasses gate from .ralphi/loop-guidance.md front matter", async () => {
+	it("enforces opt-in reviewPasses gate from .ralphi/config.yaml loop section", async () => {
 		const tempDir = createTempDir();
 		try {
 			fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 			fs.writeFileSync(
-				path.join(tempDir, ".ralphi", "loop-guidance.md"),
-				"---\nreviewPasses: 2\ntrajectoryGuard: warn_on_drift\n---\nKeep changes focused.\n",
+				path.join(tempDir, ".ralphi", "config.yaml"),
+				[
+					"loop:",
+					"  reviewPasses: 2",
+					'  trajectoryGuard: "warn_on_drift"',
+					"",
+				].join("\n"),
 				"utf8",
 			);
 
@@ -83,8 +88,13 @@ describe("optional advanced loop review controls", () => {
 		try {
 			fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 			fs.writeFileSync(
-				path.join(tempDir, ".ralphi", "loop-guidance.md"),
-				"---\nreviewPasses: 2\ntrajectoryGuard: require_corrective_plan\n---\nKeep changes focused.\n",
+				path.join(tempDir, ".ralphi", "config.yaml"),
+				[
+					"loop:",
+					"  reviewPasses: 2",
+					'  trajectoryGuard: "require_corrective_plan"',
+					"",
+				].join("\n"),
 				"utf8",
 			);
 
@@ -118,8 +128,13 @@ describe("optional advanced loop review controls", () => {
 		try {
 			fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 			fs.writeFileSync(
-				path.join(tempDir, ".ralphi", "loop-guidance.md"),
-				"---\nreviewPasses: 2\ntrajectoryGuard: require_corrective_plan\n---\nKeep changes focused.\n",
+				path.join(tempDir, ".ralphi", "config.yaml"),
+				[
+					"loop:",
+					"  reviewPasses: 2",
+					'  trajectoryGuard: "require_corrective_plan"',
+					"",
+				].join("\n"),
 				"utf8",
 			);
 
@@ -157,8 +172,13 @@ describe("optional advanced loop review controls", () => {
 		try {
 			fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 			fs.writeFileSync(
-				path.join(tempDir, ".ralphi", "loop-guidance.md"),
-				"---\nreviewPasses: 2\ntrajectoryGuard: warn_on_drift\n---\nKeep changes focused.\n",
+				path.join(tempDir, ".ralphi", "config.yaml"),
+				[
+					"loop:",
+					"  reviewPasses: 2",
+					'  trajectoryGuard: "warn_on_drift"',
+					"",
+				].join("\n"),
 				"utf8",
 			);
 
@@ -174,6 +194,7 @@ describe("optional advanced loop review controls", () => {
 			expect(injected!.systemPrompt).toContain("[ADVANCED REVIEW CONTROLS]");
 			expect(injected!.systemPrompt).toContain("reviewPasses: 2");
 			expect(injected!.systemPrompt).toContain("trajectoryGuard: warn_on_drift");
+			expect(injected!.systemPrompt).toContain(".ralphi/config.yaml");
 		} finally {
 			fs.rmSync(tempDir, { recursive: true, force: true });
 		}

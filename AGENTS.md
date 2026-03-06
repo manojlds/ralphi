@@ -30,8 +30,8 @@ Individual commands:
 - Use ESM-style TypeScript imports and preserve the existing tab-indented style.
 - Prefer mock-based runtime tests via `extensions/ralphi/test/factories/pi.ts`.
 - Follow existing runtime/tool contract patterns (`ralphi_phase_done`, loop lifecycle handling).
-- Keep project-local loop preferences in `.ralphi/*` files (for example `.ralphi/loop-guidance.md`) and load them lazily from runtime paths so non-loop phases remain unaffected.
-- For optional loop controls, use additive front matter in `.ralphi/loop-guidance.md` (`reviewPasses`, `trajectoryGuard`) so defaults stay lightweight and backward compatible.
+- Keep project-local loop preferences in `.ralphi/config.yaml` (`loop.guidance`) and load them lazily from runtime paths so non-loop phases remain unaffected.
+- For optional loop controls, configure `.ralphi/config.yaml` under `loop.*` (`reviewPasses`, `trajectoryGuard`) so defaults stay lightweight and explicit.
 - For rollout/release-safety stories, keep policy in project docs (`tasks/*.md`, `README.md`) and add markdown contract tests so sequencing/go-no-go/rollback guidance does not regress silently.
 
 ## Directory Structure

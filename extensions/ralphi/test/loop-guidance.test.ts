@@ -23,32 +23,41 @@ describe("project-local loop guidance", () => {
 			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
 
 			runtime.showLoopGuidance(ctx as any);
-			expect(ctx.ui.notifications.at(-1)?.message).toContain("No loop guidance configured");
+			expect(ctx.ui.notifications.at(-1)?.message).toContain("No loop guidance configured in .ralphi/config.yaml");
 
 			await runtime.setLoopGuidance(ctx as any, "Always run npm run check before ralphi_phase_done.");
 
-			const guidancePath = path.join(tempDir, ".ralphi", "loop-guidance.md");
-			expect(fs.existsSync(guidancePath)).toBe(true);
-			expect(fs.readFileSync(guidancePath, "utf8")).toContain("Always run npm run check");
+			const configPath = path.join(tempDir, ".ralphi", "config.yaml");
+			expect(fs.existsSync(configPath)).toBe(true);
+			expect(fs.readFileSync(configPath, "utf8")).toContain("Always run npm run check");
 
 			runtime.showLoopGuidance(ctx as any);
 			expect(ctx.ui.notifications.at(-1)?.message).toContain("Always run npm run check");
 
 			runtime.clearLoopGuidance(ctx as any);
-			expect(fs.existsSync(guidancePath)).toBe(false);
-			expect(ctx.ui.notifications.at(-1)?.message).toContain("Cleared loop guidance");
+			expect(fs.existsSync(configPath)).toBe(true);
+			expect(fs.readFileSync(configPath, "utf8")).not.toContain("guidance:");
+			expect(ctx.ui.notifications.at(-1)?.message).toContain("Cleared loop guidance in .ralphi/config.yaml");
 		} finally {
 			fs.rmSync(tempDir, { recursive: true, force: true });
 		}
 	});
 
-	it("injects .ralphi/loop-guidance.md into loop iteration system prompt when present", async () => {
+	it("injects loop guidance from .ralphi/config.yaml into loop iteration system prompt when present", async () => {
 		const tempDir = createTempDir();
 		try {
 			fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 			fs.writeFileSync(
-				path.join(tempDir, ".ralphi", "loop-guidance.md"),
-				"Prefer small commits and include acceptance-criteria mapping in progress.txt.\n",
+				path.join(tempDir, ".ralphi", "config.yaml"),
+				[
+					"rules:",
+					'  - "always run tests before commit"',
+					"loop:",
+					'  guidance: "Prefer small commits and include acceptance-criteria mapping in progress.txt."',
+					"  reviewPasses: 1",
+					'  trajectoryGuard: "off"',
+					"",
+				].join("\n"),
 				"utf8",
 			);
 
@@ -61,15 +70,17 @@ describe("project-local loop guidance", () => {
 
 			const injected = runtime.handleBeforeAgentStart({ systemPrompt: "base prompt" } as any, ctx as any);
 			expect(injected).toBeDefined();
+			expect(injected!.systemPrompt).toContain("[PROJECT CONFIG RULES]");
+			expect(injected!.systemPrompt).toContain("always run tests before commit");
 			expect(injected!.systemPrompt).toContain("[PROJECT LOOP GUIDANCE]");
-			expect(injected!.systemPrompt).toContain(".ralphi/loop-guidance.md");
+			expect(injected!.systemPrompt).toContain(".ralphi/config.yaml");
 			expect(injected!.systemPrompt).toContain("Prefer small commits");
 		} finally {
 			fs.rmSync(tempDir, { recursive: true, force: true });
 		}
 	});
 
-	it("falls back to default loop prompt when guidance file is missing", async () => {
+	it("falls back to default loop prompt when loop guidance is missing", async () => {
 		const tempDir = createTempDir();
 		try {
 			const sessionManager = createMockSessionManager();
@@ -83,7 +94,6 @@ describe("project-local loop guidance", () => {
 			expect(injected).toBeDefined();
 			expect(injected!.systemPrompt).toContain("[RALPHI PHASE]");
 			expect(injected!.systemPrompt).not.toContain("[PROJECT LOOP GUIDANCE]");
-			expect(injected!.systemPrompt).not.toContain(".ralphi/loop-guidance.md");
 		} finally {
 			fs.rmSync(tempDir, { recursive: true, force: true });
 		}
@@ -93,7 +103,19 @@ describe("project-local loop guidance", () => {
 		const tempDir = createTempDir();
 		try {
 			fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
-			fs.writeFileSync(path.join(tempDir, ".ralphi", "loop-guidance.md"), "Loop-only guidance\n", "utf8");
+			fs.writeFileSync(
+				path.join(tempDir, ".ralphi", "config.yaml"),
+				[
+					"rules:",
+					'  - "non-loop rule"',
+					"loop:",
+					'  guidance: "Loop-only guidance"',
+					"  reviewPasses: 1",
+					'  trajectoryGuard: "off"',
+					"",
+				].join("\n"),
+				"utf8",
+			);
 
 			const sessionManager = createMockSessionManager();
 			const api = createMockExtensionApi(sessionManager);
@@ -104,6 +126,7 @@ describe("project-local loop guidance", () => {
 
 			const injected = runtime.handleBeforeAgentStart({ systemPrompt: "base prompt" } as any, ctx as any);
 			expect(injected).toBeDefined();
+			expect(injected!.systemPrompt).toContain("[PROJECT CONFIG RULES]");
 			expect(injected!.systemPrompt).not.toContain("[PROJECT LOOP GUIDANCE]");
 			expect(injected!.systemPrompt).not.toContain("Loop-only guidance");
 		} finally {
@@ -116,8 +139,14 @@ describe("project-local loop guidance", () => {
 		try {
 			fs.mkdirSync(path.join(tempDir, ".ralphi"), { recursive: true });
 			fs.writeFileSync(
-				path.join(tempDir, ".ralphi", "loop-guidance.md"),
-				"Keep implementation tightly scoped to one story per iteration.\n",
+				path.join(tempDir, ".ralphi", "config.yaml"),
+				[
+					"loop:",
+					'  guidance: "Keep implementation tightly scoped to one story per iteration."',
+					"  reviewPasses: 1",
+					'  trajectoryGuard: "off"',
+					"",
+				].join("\n"),
 				"utf8",
 			);
 
