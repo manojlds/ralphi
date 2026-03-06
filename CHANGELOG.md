@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## [0.6.1] - 2026-03-06
+
+### Release notes (status display + Pi-native init cleanup)
+
+- Removed the `ralphi-timing` below-editor widget to avoid duplicate status surfaces.
+- Ralphi now reports loop/phase progress via status line entries only (`ralphi-loop`, `ralphi-phase`).
+- Updated `ralphi-init` skill flow to be Pi-native:
+  - removed engine-selection prompt
+  - defaults generated config to `engine: "pi"`
+  - removed Claude alias/symlink guidance from init instructions
+
 ## [0.6.0] - 2026-03-06
 
 ### Release notes (status-only PRD progression)

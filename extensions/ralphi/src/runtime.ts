@@ -423,31 +423,11 @@ export class RalphiRuntime {
 		ctx.ui.setStatus("ralphi-phase", `🧩 ${current.phase} ${current.id} (${status}${elapsed ? ` · ${elapsed}` : ""})`);
 	}
 
-	private updateTimingWidget(ctx: RalphiContext) {
+	private clearTimingWidget(ctx: RalphiContext) {
 		if (!ctx.hasUI) return;
 		const ui = ctx.ui as unknown as { setWidget?: (key: string, content: string[] | undefined, options?: { placement?: "aboveEditor" | "belowEditor" }) => void };
 		if (typeof ui.setWidget !== "function") return;
-
-		const loop = activeLoop(this.loops);
-		const phase = this.currentPhaseRunForSession(ctx);
-		if (!loop && !phase) {
-			ui.setWidget("ralphi-timing", undefined);
-			return;
-		}
-
-		const segments: string[] = [];
-		if (loop) {
-			const elapsed = formatDuration(loop.createdAt) ?? "0s";
-			const iterationElapsed = loop.currentIterationStartedAt ? formatDuration(loop.currentIterationStartedAt) : null;
-			segments.push(`🔁 ${loop.id} ${loop.iteration}/${loop.maxIterations} · ${elapsed}${iterationElapsed ? ` · iter ${iterationElapsed}` : ""}`);
-		}
-		if (phase) {
-			const status = phase.status === "awaiting_finalize" ? "awaiting finalize" : "running";
-			const elapsed = formatDuration(phase.createdAt);
-			segments.push(`🧩 ${phase.phase} ${phase.id} · ${status}${elapsed ? ` · ${elapsed}` : ""}`);
-		}
-
-		ui.setWidget("ralphi-timing", [`ralphi ⏱ ${segments.join("  |  ")}`], { placement: "belowEditor" });
+		ui.setWidget("ralphi-timing", undefined);
 	}
 
 	private updateLoopStatusLine(ctx: RalphiContext) {
@@ -465,7 +445,7 @@ export class RalphiRuntime {
 			ctx.ui.setStatus("ralphi-loop", `🔁 ${loop.id} ${loop.iteration}/${loop.maxIterations}${elapsedSuffix}${iterationSuffix}${reflectionSuffix}${stoppingSuffix}`);
 		}
 		this.updatePhaseStatusLine(ctx);
-		this.updateTimingWidget(ctx);
+		this.clearTimingWidget(ctx);
 	}
 
 	private deactivateLoop(loop: LoopRun) {

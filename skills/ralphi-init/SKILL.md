@@ -12,7 +12,7 @@ Agentically scan a project to detect its language, framework, commands, and conv
 | File | Purpose |
 |------|---------|
 | `.ralphi/config.yaml` | Ralph loop configuration (commands, rules, engine) |
-| `AGENTS.md` (+ `CLAUDE.md` symlink for Claude) | Project conventions for the AI engine |
+| `AGENTS.md` | Project conventions for the AI engine |
 | `prek.toml` or `.git/hooks/pre-commit` | Pre-commit hook running `ralphi ralph check` |
 | `.gitignore` updates | Ignore ralph working files |
 
@@ -116,7 +116,7 @@ Analyze the codebase to discover conventions:
 1. **Testing framework**: What test runner is used? (vitest, jest, pytest, go test, cargo test, rspec)
 2. **Code style**: Is there a formatter config? (prettier, black, rustfmt, gofmt)
 3. **Framework patterns**: Are there patterns specific to the framework? (e.g., "use server actions not API routes" for Next.js App Router)
-4. **Existing guidance**: Prefer `AGENTS.md` if present. If only `CLAUDE.md` exists, extract key rules from it and plan to alias files in Step 6.
+4. **Existing guidance**: Prefer `AGENTS.md` if present. If `CLAUDE.md` or other agent guidance files exist, extract useful rules but keep `AGENTS.md` as the canonical source.
 5. **Import style**: ES modules vs CommonJS? Absolute vs relative imports?
 6. **Type strictness**: Is `strict: true` in tsconfig? Is mypy in strict mode?
 
@@ -129,12 +129,6 @@ Use the `ralphi_ask_user_question` tool to gather confirmation and preferences i
 ```json
 {
   "questions": [
-    {
-      "id": "engine",
-      "prompt": "Which AI engine should be the default?",
-      "type": "single",
-      "options": ["amp", "claude", "opencode", "pi"]
-    },
     {
       "id": "extra_rules",
       "prompt": "Any additional project conventions to enforce?",
@@ -197,7 +191,7 @@ boundaries:
     - "*.lock"
     - ".env*"
 
-engine: "amp"
+engine: "pi"
 max_retries: 3
 ```
 
@@ -205,21 +199,16 @@ Notes:
 - `project.name` should be the directory name (kebab-case)
 - Only include `framework` if one was detected
 - Only include commands that were confirmed — comment out or omit undetected ones
-- `engine` is what the user chose
+- `engine` is always `pi` (ralphi is a Pi-native extension)
 - `boundaries.never_touch` always includes `*.lock` and `.env*`
 
-### Step 6: Generate `AGENTS.md` (canonical) and Claude alias if needed
+### Step 6: Generate `AGENTS.md` (canonical)
 
-Use `AGENTS.md` as the canonical guidance file for **all** engines (amp, claude, opencode, pi).
+Use `AGENTS.md` as the canonical guidance file for the project.
 
 **Before writing:** Check if `AGENTS.md` already exists. If it does, show the user the existing content and ask whether to overwrite, merge, or skip.
 
-If the selected engine is **claude**, ensure `CLAUDE.md` is available as an alias:
-- If `AGENTS.md` exists and `CLAUDE.md` is missing, create symlink: `ln -s AGENTS.md CLAUDE.md`
-- If `CLAUDE.md` exists and `AGENTS.md` is missing, create symlink: `ln -s CLAUDE.md AGENTS.md`
-- If both exist as regular files with different content, ask the user which one should be canonical, then keep one canonical file and make the other a symlink.
-
-Always write/merge content into `AGENTS.md`; `CLAUDE.md` should only be a compatibility alias when needed.
+Always write/merge content into `AGENTS.md`.
 
 The file should contain:
 
@@ -320,7 +309,7 @@ Read the existing `.gitignore` first and only add entries that are missing. Do n
 ## Notes
 
 - `ralphi ralph check` is the command that runs quality checks from the config. It is called by the pre-commit hook to ensure code quality before commits.
-- Skills for direct engine access (amp, claude, opencode, pi) are installed in `.agents/skills/`.
+- Ralphi is Pi-native. No external engine skill installation is required for init.
 - If the user wants to add more rules later, they can run `ralphi ralph add-rule "rule text"`.
 - The config file is intentionally simple YAML — users should feel comfortable editing it by hand.
 
