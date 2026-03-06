@@ -1,71 +1,70 @@
 {
   "project": "ralphi",
-  "branchName": "ralph/loop-guidance-step-back-review",
-  "description": "Add a three-phase rollout for loop step-back review, PRD trajectory checks, and project-local loop guidance configuration while preserving Ralph-style simplicity.",
+  "branchName": "ralph/loop-reflection-checkpoints",
+  "description": "Add configurable cadence-based reflection checkpoints to the ralphi loop, including checkpoint prompt injection, structured reflection completion metadata, and visibility in loop status.",
   "userStories": [
     {
       "id": "US-001",
-      "title": "Phase 1 — Skill-level iteration review protocol",
-      "description": "As a maintainer, I want the ralphi-loop skill to require a deterministic step-back review and PRD trajectory check so that iteration quality improves without runtime complexity.",
+      "title": "Add reflection checkpoint config model",
+      "description": "As a maintainer, I want reflection cadence options in project config so that reflection behavior is configurable without code changes.",
       "acceptanceCriteria": [
-        "skills/ralphi-loop/SKILL.md is updated with an explicit post-implementation review protocol.",
-        "The protocol requires re-grounding in prd.json and progress.txt, a code review pass, and a PRD trajectory check.",
-        "Progress logging format is updated to include review outcome and trajectory fields (for example ON_TRACK, RISK, DRIFT).",
-        "The phase remains prompt/skill-driven only with no runtime command changes required.",
-        "Existing loop usage still functions without requiring new files.",
-        "New tests verify expected behavior and output format assumptions where testable.",
-        "Tests, typecheck, and lint pass."
+        "loop config supports optional reflectEvery (integer) and reflectInstructions (string).",
+        "reflectEvery <= 0 is treated as disabled.",
+        "Config parsing tolerates missing or malformed reflection values without crashing.",
+        "Existing loop settings (guidance, reviewPasses, trajectoryGuard) continue to work unchanged.",
+        "Tests cover default-disabled and configured reflection behavior.",
+        "lint, typecheck, and unit tests pass."
       ],
       "priority": 1,
       "passes": true,
-      "notes": "Updated skills/ralphi-loop/SKILL.md with a deterministic post-implementation step-back review protocol (re-grounding, code review pass, trajectory check), expanded progress report template with Review Outcome and Trajectory fields, and added loop-skill-review-protocol tests to verify content/format expectations."
+      "notes": ""
     },
     {
       "id": "US-002",
-      "title": "Phase 2 — Project-local configurable loop guidance",
-      "description": "As a user, I want to define project-specific loop guidance in a local file so the agent consistently follows my review and direction preferences every iteration.",
+      "title": "Inject reflection-mode prompt on checkpoint iterations",
+      "description": "As a user, I want scheduled reflection prompts during loop execution so the agent periodically reassesses trajectory instead of grinding blindly.",
       "acceptanceCriteria": [
-        "A project-local guidance file convention is introduced at .ralphi/loop-guidance.md.",
-        "Runtime loads and injects guidance when present during loop iterations.",
-        "If the file is missing, runtime behavior gracefully falls back to default loop behavior.",
-        "Guidance injection is scoped to loop-relevant phases and does not leak into unrelated phases.",
-        "A command set exists to show, set, and clear guidance without manual code edits.",
-        "Tests cover guidance-present, guidance-missing, and cleanup/session-switch behavior.",
-        "Tests, typecheck, and lint pass."
+        "Runtime determines checkpoint iterations using loop.reflectEvery cadence.",
+        "Checkpoint iterations include a dedicated reflection prompt block with explicit questions and required outputs.",
+        "If loop.reflectInstructions is set, it is used; otherwise a default reflection template is used.",
+        "Non-checkpoint iterations keep current prompt behavior.",
+        "Loop status includes next reflection countdown when cadence is enabled.",
+        "Tests verify checkpoint vs non-checkpoint prompt and status behavior.",
+        "lint, typecheck, and unit tests pass."
       ],
       "priority": 2,
-      "passes": true,
-      "notes": "Added project-local guidance support at .ralphi/loop-guidance.md with runtime injection for ralphi-loop-iteration only, graceful fallback when missing, new /ralphi-loop-guidance-show|set|clear commands, and loop-guidance unit tests covering present/missing/non-loop scope and clear+session-switch behavior."
+      "passes": false,
+      "notes": ""
     },
     {
       "id": "US-003",
-      "title": "Phase 3 — Optional advanced review-pass controls",
-      "description": "As a maintainer, I want optional review-pass controls so that teams can increase quality gates when needed without forcing extra overhead on all users.",
+      "title": "Require structured reflection metadata at checkpoints",
+      "description": "As a maintainer, I want checkpoint iterations to require structured reflection output so reflection is auditable and not just narrative text.",
       "acceptanceCriteria": [
-        "Optional review-pass controls are defined (for example reviewPasses and trajectory guard behavior).",
-        "Default behavior keeps the current lightweight flow and advanced controls are opt-in.",
-        "If trajectory is flagged as DRIFT, loop output includes a corrective-plan signal and next-step guidance.",
-        "Completion behavior remains compatible with the existing ralphi_phase_done contract; any additions are optional.",
-        "Tests cover opt-in behavior and default-path backward compatibility.",
-        "Tests, typecheck, and lint pass."
+        "ralphi_phase_done supports additive optional reflectionSummary and nextIterationPlan metadata fields.",
+        "When an iteration is a reflection checkpoint, completion fails with actionable guidance if required reflection fields are missing.",
+        "Validation is scoped to loop iterations only and does not affect init/prd/convert phases.",
+        "Non-checkpoint iterations do not require reflection metadata.",
+        "Tests cover checkpoint pass/fail validation and non-loop safety.",
+        "lint, typecheck, and unit tests pass."
       ],
       "priority": 3,
-      "passes": true,
-      "notes": "Added optional advanced review controls via .ralphi/loop-guidance.md front matter (reviewPasses, trajectoryGuard), extended ralphi_phase_done with additive optional review metadata fields, enforced opt-in review/DRIFT guards in runtime, emitted DRIFT corrective-plan guidance in loop output, and added loop-review-controls tests for opt-in gates + default backward compatibility."
+      "passes": false,
+      "notes": ""
     },
     {
       "id": "US-004",
-      "title": "Sequential rollout and release safety",
-      "description": "As a maintainer, I want strict phase sequencing and release gates so each phase lands safely before the next begins.",
+      "title": "Document reflection cadence and migration guidance",
+      "description": "As a user, I want clear docs for reflection cadence setup so I can safely enable it project-by-project.",
       "acceptanceCriteria": [
-        "Phase sequencing is strict: Phase 2 starts only after Phase 1 acceptance is complete, and Phase 3 starts only after Phase 2 acceptance is complete.",
-        "Each phase has explicit go and no-go criteria plus rollback expectations.",
-        "Release notes and migration notes are defined for externally visible behavior changes.",
-        "Tests, typecheck, and lint pass."
+        "README loop/config docs include loop.reflectEvery and loop.reflectInstructions usage.",
+        "CHANGELOG includes release and migration notes for reflection checkpoints.",
+        "Docs clearly state default-off behavior and gradual rollout guidance.",
+        "lint, typecheck, and unit tests pass."
       ],
       "priority": 4,
-      "passes": true,
-      "notes": "Documented strict phase sequencing with explicit go/no-go/rollback gates in tasks/prd-three-phase-loop-guidance-and-step-back-review.md, added release+migration notes to both PRD docs and README.md, and added markdown contract tests to prevent rollout-safety guidance regressions."
+      "passes": false,
+      "notes": ""
     }
   ]
 }

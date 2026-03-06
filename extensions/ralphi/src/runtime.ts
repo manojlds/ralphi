@@ -37,6 +37,16 @@ const DEFAULT_LOOP_REVIEW_CONTROLS: LoopReviewControls = {
 	trajectoryGuard: "off",
 };
 
+type LoopReflectionConfig = {
+	reflectEvery: number | null;
+	reflectInstructions: string | null;
+};
+
+const DEFAULT_LOOP_REFLECTION_CONFIG: LoopReflectionConfig = {
+	reflectEvery: null,
+	reflectInstructions: null,
+};
+
 type PersistedState = {
 	phaseRuns: PhaseRun[];
 	loops: LoopRun[];
@@ -57,6 +67,7 @@ type LoopConfigData = {
 	rules: string[];
 	guidance: string | null;
 	controls: LoopReviewControls;
+	reflection: LoopReflectionConfig;
 };
 
 export class RalphiRuntime {
@@ -249,12 +260,26 @@ export class RalphiRuntime {
 			rules: [],
 			guidance: null,
 			controls: { ...DEFAULT_LOOP_REVIEW_CONTROLS },
+			reflection: { ...DEFAULT_LOOP_REFLECTION_CONFIG },
 		};
 
 		const lines = raw.replace(/\r\n/g, "\n").split("\n");
 		let section = "";
-		let loopGuidanceMode: "none" | "list" | "block" = "none";
+		let loopTextTarget: "none" | "guidance" | "reflectinstructions" = "none";
+		let loopTextMode: "none" | "list" | "block" = "none";
 		const guidanceLines: string[] = [];
+		const reflectInstructionLines: string[] = [];
+
+		const resetLoopTextCapture = () => {
+			loopTextTarget = "none";
+			loopTextMode = "none";
+		};
+
+		const targetTextLines = () => {
+			if (loopTextTarget === "guidance") return guidanceLines;
+			if (loopTextTarget === "reflectinstructions") return reflectInstructionLines;
+			return null;
+		};
 
 		for (const line of lines) {
 			const trimmed = line.trim();
@@ -264,7 +289,7 @@ export class RalphiRuntime {
 			if (indent === 0) {
 				const topLevel = trimmed.match(/^([\w-]+)\s*:\s*(.*)$/);
 				section = topLevel ? topLevel[1] : "";
-				loopGuidanceMode = "none";
+				resetLoopTextCapture();
 				continue;
 			}
 
@@ -280,7 +305,10 @@ export class RalphiRuntime {
 
 			if (indent <= 2) {
 				const kv = trimmed.match(/^([\w-]+)\s*:\s*(.*)$/);
-				if (!kv) continue;
+				if (!kv) {
+					resetLoopTextCapture();
+					continue;
+				}
 
 				const key = kv[1].toLowerCase();
 				const value = kv[2].trim();
@@ -289,48 +317,76 @@ export class RalphiRuntime {
 					if (Number.isFinite(parsed) && parsed > 0) {
 						config.controls.reviewPasses = parsed;
 					}
-					loopGuidanceMode = "none";
+					resetLoopTextCapture();
 					continue;
 				}
 				if (key === "trajectoryguard") {
 					const guard = this.parseTrajectoryGuard(this.unquoteYaml(value));
 					if (guard) config.controls.trajectoryGuard = guard;
-					loopGuidanceMode = "none";
+					resetLoopTextCapture();
 					continue;
 				}
-				if (key === "guidance") {
+				if (key === "reflectevery") {
+					const parsed = Number.parseInt(this.unquoteYaml(value), 10);
+					config.reflection.reflectEvery = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+					resetLoopTextCapture();
+					continue;
+				}
+				if (key === "guidance" || key === "reflectinstructions") {
+					const normalizedKey = key as "guidance" | "reflectinstructions";
 					if (!value) {
-						loopGuidanceMode = "list";
-						guidanceLines.length = 0;
+						loopTextTarget = normalizedKey;
+						loopTextMode = "list";
+						const linesForKey = normalizedKey === "guidance" ? guidanceLines : reflectInstructionLines;
+						linesForKey.length = 0;
 						continue;
 					}
 					if (value === "|" || value === ">") {
-						loopGuidanceMode = "block";
-						guidanceLines.length = 0;
+						loopTextTarget = normalizedKey;
+						loopTextMode = "block";
+						const linesForKey = normalizedKey === "guidance" ? guidanceLines : reflectInstructionLines;
+						linesForKey.length = 0;
 						continue;
 					}
-					config.guidance = this.unquoteYaml(value) || null;
-					loopGuidanceMode = "none";
+
+					const resolved = this.unquoteYaml(value) || null;
+					if (normalizedKey === "guidance") {
+						config.guidance = resolved;
+					} else {
+						config.reflection.reflectInstructions = resolved;
+					}
+					resetLoopTextCapture();
 					continue;
 				}
-				loopGuidanceMode = "none";
+				resetLoopTextCapture();
 				continue;
 			}
 
-			if (loopGuidanceMode === "list") {
+			if (loopTextMode === "list") {
 				const listItem = trimmed.match(/^-\s+(.+)$/);
-				if (listItem) guidanceLines.push(this.unquoteYaml(listItem[1]));
+				if (!listItem) continue;
+				const linesForTarget = targetTextLines();
+				if (linesForTarget) {
+					linesForTarget.push(this.unquoteYaml(listItem[1]));
+				}
 				continue;
 			}
 
-			if (loopGuidanceMode === "block" && indent >= 4) {
-				guidanceLines.push(line.slice(4));
+			if (loopTextMode === "block" && indent >= 4) {
+				const linesForTarget = targetTextLines();
+				if (linesForTarget) {
+					linesForTarget.push(line.slice(4));
+				}
 			}
 		}
 
 		if (!config.guidance && guidanceLines.length > 0) {
 			const compact = guidanceLines.map((part) => part.trim()).filter(Boolean);
 			config.guidance = compact.join("\n") || null;
+		}
+		if (!config.reflection.reflectInstructions && reflectInstructionLines.length > 0) {
+			const compact = reflectInstructionLines.map((part) => part.trim()).filter(Boolean);
+			config.reflection.reflectInstructions = compact.join("\n") || null;
 		}
 
 		return config;
@@ -343,6 +399,7 @@ export class RalphiRuntime {
 				rules: [],
 				guidance: null,
 				controls: { ...DEFAULT_LOOP_REVIEW_CONTROLS },
+				reflection: { ...DEFAULT_LOOP_REFLECTION_CONFIG },
 			};
 		}
 		return this.parseConfigYaml(raw);
@@ -352,13 +409,27 @@ export class RalphiRuntime {
 		return controls.reviewPasses > 1 || controls.trajectoryGuard !== "off";
 	}
 
-	private renderLoopConfigSection(guidance: string | null, controls: LoopReviewControls): string[] {
+	private hasReflectionConfig(reflection: LoopReflectionConfig): boolean {
+		return reflection.reflectEvery !== null || Boolean(reflection.reflectInstructions?.trim());
+	}
+
+	private renderLoopConfigSection(
+		guidance: string | null,
+		controls: LoopReviewControls,
+		reflection: LoopReflectionConfig,
+	): string[] {
 		const lines: string[] = ["loop:"];
 		if (guidance && guidance.trim().length > 0) {
 			lines.push(`  guidance: ${JSON.stringify(guidance.trim())}`);
 		}
 		lines.push(`  reviewPasses: ${controls.reviewPasses}`);
 		lines.push(`  trajectoryGuard: ${JSON.stringify(controls.trajectoryGuard)}`);
+		if (reflection.reflectEvery !== null) {
+			lines.push(`  reflectEvery: ${reflection.reflectEvery}`);
+		}
+		if (reflection.reflectInstructions && reflection.reflectInstructions.trim().length > 0) {
+			lines.push(`  reflectInstructions: ${JSON.stringify(reflection.reflectInstructions.trim())}`);
+		}
 		return lines;
 	}
 
@@ -1183,7 +1254,9 @@ Loop context:
 
 	showLoopGuidance(ctx: ExtensionCommandContext) {
 		const config = this.loadConfigData(ctx.cwd);
-		if (!config.guidance) {
+		const hasReflection = this.hasReflectionConfig(config.reflection);
+		const hasAdvancedControls = this.hasAdvancedReviewControls(config.controls);
+		if (!config.guidance && !hasReflection && !hasAdvancedControls) {
 			ctx.ui.notify(`No loop guidance configured in ${CONFIG_FILE_PATH} (loop.guidance).`, "info");
 			return;
 		}
@@ -1191,10 +1264,12 @@ Loop context:
 		ctx.ui.notify(
 			[
 				`Loop guidance (${CONFIG_FILE_PATH}):`,
-				config.guidance,
+				config.guidance ?? "(none)",
 				"",
 				`reviewPasses: ${config.controls.reviewPasses}`,
 				`trajectoryGuard: ${config.controls.trajectoryGuard}`,
+				`reflectEvery: ${config.reflection.reflectEvery ?? "disabled"}`,
+				`reflectInstructions: ${config.reflection.reflectInstructions?.trim() || "(default)"}`,
 			].join("\n"),
 			"info",
 		);
@@ -1218,8 +1293,11 @@ Loop context:
 
 		const configFile = this.configFile(ctx.cwd);
 		const existingRaw = this.readConfigYaml(ctx.cwd) ?? "";
-		const controls = this.loadConfigData(ctx.cwd).controls;
-		const updated = this.upsertLoopSection(existingRaw, this.renderLoopConfigSection(guidance, controls));
+		const configData = this.loadConfigData(ctx.cwd);
+		const updated = this.upsertLoopSection(
+			existingRaw,
+			this.renderLoopConfigSection(guidance, configData.controls, configData.reflection),
+		);
 		fs.mkdirSync(path.dirname(configFile), { recursive: true });
 		fs.writeFileSync(configFile, updated, "utf8");
 		ctx.ui.notify(`Saved loop guidance to ${CONFIG_FILE_PATH} (loop.guidance).`, "info");
@@ -1233,11 +1311,14 @@ Loop context:
 		}
 
 		const existingRaw = this.readConfigYaml(ctx.cwd) ?? "";
-		const controls = this.loadConfigData(ctx.cwd).controls;
-		const keepControls = this.hasAdvancedReviewControls(controls);
+		const configData = this.loadConfigData(ctx.cwd);
+		const keepControls = this.hasAdvancedReviewControls(configData.controls);
+		const keepReflection = this.hasReflectionConfig(configData.reflection);
 		const updated = this.upsertLoopSection(
 			existingRaw,
-			keepControls ? this.renderLoopConfigSection(null, controls) : null,
+			keepControls || keepReflection
+				? this.renderLoopConfigSection(null, configData.controls, configData.reflection)
+				: null,
 		);
 		fs.writeFileSync(configFile, updated, "utf8");
 		ctx.ui.notify(`Cleared loop guidance in ${CONFIG_FILE_PATH}.`, "info");
