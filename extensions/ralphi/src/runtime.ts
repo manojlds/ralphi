@@ -391,37 +391,68 @@ export class RalphiRuntime {
 		return issues;
 	}
 
-	private async ensureLoopPrerequisites(ctx: ExtensionCommandContext): Promise<boolean> {
-		const isTestRuntime =
+	private isTestRuntime(): boolean {
+		return (
 			Boolean(process.env.VITEST) ||
 			Boolean(process.env.VITEST_WORKER_ID) ||
 			Boolean(process.env.JEST_WORKER_ID) ||
-			Boolean(process.env.TEST);
-		if (isTestRuntime) return true;
+			Boolean(process.env.TEST)
+		);
+	}
 
+	private collectLoopPrerequisiteIssues(cwd: string): string[] {
 		const issues: string[] = [];
-		const configPath = this.configFile(ctx.cwd);
+		const configPath = this.configFile(cwd);
 		if (!fs.existsSync(configPath)) {
 			issues.push(`Missing ${CONFIG_FILE_PATH}. Run /ralphi-init first.`);
-		} else if (!this.hasConfiguredCommands(ctx.cwd)) {
+		} else if (!this.hasConfiguredCommands(cwd)) {
 			issues.push(`${CONFIG_FILE_PATH} must define at least one command under commands: (e.g. test/lint/typecheck).`);
 		}
 
-		issues.push(...this.validatePrdForLoop(ctx.cwd));
+		issues.push(...this.validatePrdForLoop(cwd));
 
-		if (!this.isGitRepository(ctx.cwd)) {
+		if (!this.isGitRepository(cwd)) {
 			issues.push("Loop requires a git repository. Run inside a git repo and commit the initialized setup.");
-		} else if (!this.precommitRunsRalphiCheck(ctx.cwd)) {
+		} else if (!this.precommitRunsRalphiCheck(cwd)) {
 			issues.push(
 				"Pre-commit is not enforcing 'ralphi check'. Run /ralphi-init to configure prek.toml or .git/hooks/pre-commit.",
 			);
 		}
 
+		return issues;
+	}
+
+	private async ensureLoopPrerequisites(ctx: ExtensionCommandContext): Promise<boolean> {
+		if (this.isTestRuntime()) return true;
+		const issues = this.collectLoopPrerequisiteIssues(ctx.cwd);
 		if (issues.length === 0) return true;
 
 		ctx.ui.notify(
 			[
 				"Cannot start /ralphi-loop-start — prerequisite checks failed:",
+				...issues.map((issue) => `- ${issue}`),
+			].join("\n"),
+			"error",
+		);
+		return false;
+	}
+
+	async validateLoopPrerequisites(ctx: ExtensionCommandContext): Promise<boolean> {
+		this.restoreStateFromSession(ctx);
+		if (this.isTestRuntime()) {
+			ctx.ui.notify("Loop preflight validation skipped in test runtime.", "info");
+			return true;
+		}
+
+		const issues = this.collectLoopPrerequisiteIssues(ctx.cwd);
+		if (issues.length === 0) {
+			ctx.ui.notify("Loop preflight checks passed. Ready for /ralphi-loop-start.", "info");
+			return true;
+		}
+
+		ctx.ui.notify(
+			[
+				"Loop preflight checks failed:",
 				...issues.map((issue) => `- ${issue}`),
 			].join("\n"),
 			"error",

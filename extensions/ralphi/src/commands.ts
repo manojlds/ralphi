@@ -187,6 +187,13 @@ export function registerCommands(pi: ExtensionAPI, runtime: RalphiRuntime) {
 		},
 	});
 
+	pi.registerCommand("ralphi-loop-validate", {
+		description: "Validate loop preflight prerequisites (config, PRD, git, pre-commit)",
+		handler: async (_args, ctx) => {
+			await runtime.validateLoopPrerequisites(ctx);
+		},
+	});
+
 	pi.registerCommand("ralphi-loop-guidance-show", {
 		description: "Show project-local loop guidance",
 		handler: async (_args, ctx) => {

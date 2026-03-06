@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## [0.6.5] - 2026-03-06
+
+### Release notes (manual loop preflight command)
+
+- Added `/ralphi-loop-validate` command to run loop preflight checks without starting a loop.
+- Uses the same runtime prerequisite validation as `/ralphi-loop-start`.
+
 ## [0.6.4] - 2026-03-06
 
 ### Release notes (loop preflight safeguards)

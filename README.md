@@ -152,6 +152,7 @@ When you run `/ralphi-loop-start`:
 | `/ralphi-loop-open [loopId]` | Jump to active/recent iteration session |
 | `/ralphi-loop-controller [loopId]` | Return to controller session |
 | `/ralphi-loop-status` | Show active runs/loops |
+| `/ralphi-loop-validate` | Validate loop preflight prerequisites |
 | `/ralphi-loop-guidance-show` | Show loop guidance from config |
 | `/ralphi-loop-guidance-set <guidance>` | Set `loop.guidance` in config |
 | `/ralphi-loop-guidance-clear` | Clear `loop.guidance` in config |
