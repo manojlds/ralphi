@@ -31,6 +31,16 @@ export function registerTools(pi: ExtensionAPI, runtime: RalphiRuntime) {
 			),
 			trajectoryNotes: Type.Optional(Type.String({ description: "Optional notes for RISK/DRIFT trajectory" })),
 			correctivePlan: Type.Optional(Type.String({ description: "Optional corrective plan; required for DRIFT in strict mode" })),
+			reflectionSummary: Type.Optional(
+				Type.String({
+					description: "Optional loop reflection summary; required on reflection checkpoint iterations",
+				}),
+			),
+			nextIterationPlan: Type.Optional(
+				Type.String({
+					description: "Optional loop plan for next steps; required on reflection checkpoint iterations",
+				}),
+			),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			try {

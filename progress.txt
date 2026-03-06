@@ -10,6 +10,7 @@
 - Project-local loop guidance pattern: store iteration preferences at `.ralphi/loop-guidance.md`, manage via `/ralphi-loop-guidance-*` commands, and inject only from `handleBeforeAgentStart` when phase is `ralphi-loop-iteration`
 - Optional advanced loop controls pattern: use additive front matter in `.ralphi/loop-guidance.md` (`reviewPasses`, `trajectoryGuard`) so stricter gates are opt-in while default behavior remains unchanged
 - Loop config mutation safety pattern: when command helpers rewrite `.ralphi/config.yaml` `loop:` blocks, always preserve additive `loop.*` keys (for example `reflectEvery`, `reflectInstructions`) to avoid silently dropping unrelated settings
+- Reflection checkpoint enforcement pattern: gate checkpoint-only completion requirements in `markPhaseDone` by reusing the shared cadence helper (`reflectionCheckpointInfo`) so validation is deterministic and non-checkpoint/non-loop paths remain unchanged
 - Rollout-safety documentation pattern: capture phase sequencing + go/no-go + rollback policy in `tasks/*.md` and guard it with markdown contract tests under `extensions/ralphi/test`.
 ---
 
@@ -219,4 +220,28 @@ Corrective Plan: N/A
 - **Learnings for future iterations:**
   - For cadence-based loop behaviors, centralize checkpoint math in one runtime helper and reuse it across prompt injection + status rendering to prevent drift
   - Reflection UX is easier to audit when checkpoint prompts use a stable section marker (`[REFLECTION CHECKPOINT]`) with explicit required output bullets
+---
+
+## 2026-03-06T04:00:27Z - US-003
+Session: N/A
+Review Outcome: PASS
+Trajectory: ON_TRACK
+Trajectory Notes: N/A
+Corrective Plan: N/A
+- Extended `ralphi_phase_done` contract with additive optional checkpoint metadata fields: `reflectionSummary` and `nextIterationPlan`
+- Added checkpoint-only completion validation in `markPhaseDone`: when `loop.reflectEvery` marks the current loop iteration as a reflection checkpoint, missing reflection metadata now fails with actionable guidance and an inline JSON example
+- Kept validation scoped to loop iterations only; init/prd/convert completion paths remain unaffected
+- Updated reflection checkpoint prompt wording to reference exact tool field names so required metadata is explicit at checkpoint time
+- Added focused unit coverage for checkpoint fail/pass behavior, non-checkpoint bypass behavior, non-loop safety, and tool schema field registration
+- Ran `npm run check` (lint + typecheck + unit tests): all pass
+- Files changed:
+  - `extensions/ralphi/src/types.ts`
+  - `extensions/ralphi/src/tools.ts`
+  - `extensions/ralphi/src/runtime.ts`
+  - `extensions/ralphi/test/loop-reflection-metadata.test.ts`
+  - `prd.json`
+  - `progress.txt`
+- **Learnings for future iterations:**
+  - For checkpoint-gated completion rules, validate requirements in `markPhaseDone` (not startup prompts) so enforcement remains deterministic and auditable even if prompt text drifts
+  - Keep checkpoint metadata requirements additive and optional at schema level, then enforce conditionally based on runtime checkpoint state for backward compatibility
 ---

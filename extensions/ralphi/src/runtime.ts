@@ -470,9 +470,9 @@ export class RalphiRuntime {
 			DEFAULT_REFLECTION_QUESTIONS,
 			"",
 			"Required outputs before calling ralphi_phase_done:",
-			"- Reflection Summary: concise findings and confidence level",
-			"- Trajectory Decision: ON_TRACK | RISK | DRIFT with rationale",
-			"- Next Iteration Plan: concrete, ordered next steps",
+			"- reflectionSummary: concise findings and confidence level",
+			"- trajectory: ON_TRACK | RISK | DRIFT (with trajectoryNotes for RISK/DRIFT)",
+			"- nextIterationPlan: concrete, ordered next steps",
 		];
 		return lines.join("\n");
 	}
@@ -872,6 +872,8 @@ export class RalphiRuntime {
 			trajectory: run.trajectory,
 			trajectoryNotes: run.trajectoryNotes,
 			correctivePlan: run.correctivePlan,
+			reflectionSummary: run.reflectionSummary,
+			nextIterationPlan: run.nextIterationPlan,
 		});
 		this.sendProgressMessage(
 			`🔁 ${loop.id}: iteration ${loop.iteration}/${loop.maxIterations} finalized — ${run.summary ?? "(no summary)"}`,
@@ -1472,6 +1474,28 @@ Loop context:
 		return { ok: true };
 	}
 
+	private validateLoopReflectionCheckpointMetadata(run: PhaseRun, params: PhaseDoneInput): { ok: true } | { ok: false; text: string } {
+		if (run.phase !== "ralphi-loop-iteration") return { ok: true };
+
+		const reflectionInfo = this.reflectionCheckpointInfo(run.cwd, run.iteration ?? 0);
+		if (!reflectionInfo?.isCheckpoint) return { ok: true };
+
+		const missingFields: string[] = [];
+		if (!params.reflectionSummary?.trim()) missingFields.push("reflectionSummary");
+		if (!params.nextIterationPlan?.trim()) missingFields.push("nextIterationPlan");
+		if (missingFields.length === 0) return { ok: true };
+
+		const iterationLabel = Number.isFinite(run.iteration) ? run.iteration : "?";
+		return {
+			ok: false,
+			text:
+				`Reflection checkpoint requirements not met for ${run.id} (iteration ${iterationLabel}, loop.reflectEvery=${reflectionInfo.cadence}). ` +
+				`Missing required field(s): ${missingFields.join(", ")}. ` +
+				"Provide these fields in ralphi_phase_done, then retry. " +
+				"Example: { \"reflectionSummary\": \"Key findings + confidence\", \"nextIterationPlan\": \"1) ... 2) ...\" }",
+		};
+	}
+
 	private driftCompletionGuidance(run: PhaseRun): string | null {
 		if (run.phase !== "ralphi-loop-iteration" || run.trajectory !== "DRIFT") return null;
 		const plan = run.correctivePlan?.trim();
@@ -1503,6 +1527,11 @@ Loop context:
 			return { ok: false, text: controlValidation.text };
 		}
 
+		const reflectionValidation = this.validateLoopReflectionCheckpointMetadata(run, params);
+		if (!reflectionValidation.ok) {
+			return { ok: false, text: reflectionValidation.text };
+		}
+
 		run.summary = params.summary;
 		run.outputs = params.outputs ?? [];
 		run.complete = params.complete ?? false;
@@ -1510,6 +1539,8 @@ Loop context:
 		run.trajectory = params.trajectory;
 		run.trajectoryNotes = params.trajectoryNotes?.trim() || undefined;
 		run.correctivePlan = params.correctivePlan?.trim() || undefined;
+		run.reflectionSummary = params.reflectionSummary?.trim() || undefined;
+		run.nextIterationPlan = params.nextIterationPlan?.trim() || undefined;
 		run.status = "awaiting_finalize";
 		this.activePhaseBySession.delete(run.sessionKey);
 		this.appendRalphiEvent("phase_done_called", {
@@ -1522,6 +1553,8 @@ Loop context:
 			trajectory: run.trajectory,
 			trajectoryNotes: run.trajectoryNotes,
 			correctivePlan: run.correctivePlan,
+			reflectionSummary: run.reflectionSummary,
+			nextIterationPlan: run.nextIterationPlan,
 		});
 		this.persistState(ctx);
 

@@ -32,6 +32,8 @@ export interface PhaseRun {
 	trajectory?: Trajectory;
 	trajectoryNotes?: string;
 	correctivePlan?: string;
+	reflectionSummary?: string;
+	nextIterationPlan?: string;
 	autoConfirm: boolean;
 }
 
@@ -57,6 +59,8 @@ export interface PhaseDoneInput {
 	trajectory?: Trajectory;
 	trajectoryNotes?: string;
 	correctivePlan?: string;
+	reflectionSummary?: string;
+	nextIterationPlan?: string;
 }
 
 export interface LoopReviewControls {
