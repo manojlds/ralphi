@@ -109,6 +109,28 @@ export class RalphiRuntime {
 		);
 	}
 
+	private appendLoopAutoCompletionNote(cwd: string, loopId: string, iteration: number) {
+		const progressPath = path.resolve(cwd, "progress.txt");
+		const note = [
+			`## ${new Date().toISOString()} - Loop Auto-Completion (${loopId})`,
+			"- Reason: No pending PRD stories remain (all userStories have passes=true).",
+			`- Iteration count at stop: ${iteration}.`,
+			"---",
+		].join("\n");
+
+		try {
+			if (fs.existsSync(progressPath)) {
+				const existing = fs.readFileSync(progressPath, "utf8");
+				const separator = existing.endsWith("\n") || existing.length === 0 ? "" : "\n";
+				fs.appendFileSync(progressPath, `${separator}${note}\n`, "utf8");
+				return;
+			}
+			fs.writeFileSync(progressPath, `${note}\n`, "utf8");
+		} catch {
+			// best-effort audit trail
+		}
+	}
+
 	private snapshotState(): PersistedState {
 		return {
 			phaseRuns: [...this.phaseRuns.values()],
@@ -430,6 +452,28 @@ export class RalphiRuntime {
 			return { id: pending[0].id, title: pending[0].title };
 		} catch {
 			return null;
+		}
+	}
+
+	/**
+	 * Returns:
+	 * - true  => PRD exists and has at least one story with passes !== true
+	 * - false => PRD exists and all stories are passes === true
+	 * - undefined => PRD missing/unreadable/invalid shape (unknown, keep loop behavior unchanged)
+	 */
+	private hasRemainingPrdStories(cwd: string): boolean | undefined {
+		const prdPath = path.resolve(cwd, "prd.json");
+		if (!fs.existsSync(prdPath)) return undefined;
+
+		try {
+			const parsed = JSON.parse(fs.readFileSync(prdPath, "utf8")) as { userStories?: unknown };
+			if (!parsed || !Array.isArray(parsed.userStories)) return undefined;
+
+			return parsed.userStories
+				.filter((story): story is Record<string, unknown> => Boolean(story) && typeof story === "object")
+				.some((story) => story.passes !== true);
+		} catch {
+			return undefined;
 		}
 	}
 
@@ -796,6 +840,25 @@ Run contract for this phase:
 
 		const nextIteration = loop.iteration + 1;
 		const pendingStory = this.nextPendingStory(ctx.cwd);
+		const hasRemainingStories = this.hasRemainingPrdStories(ctx.cwd);
+		if (hasRemainingStories === false) {
+			loop.active = false;
+			loop.activeIterationSessionFile = undefined;
+			this.updateLoopStatusLine(ctx);
+			this.appendRalphiEvent("loop_completed_no_pending_stories", {
+				loopId: loop.id,
+				iteration: loop.iteration,
+			});
+			this.appendLoopAutoCompletionNote(ctx.cwd, loop.id, loop.iteration);
+			this.persistState(ctx);
+			this.sendProgressMessage(
+				`✅ Loop ${loop.id} complete after ${loop.iteration} iteration(s) — no pending PRD stories remain.`,
+				{ loopId: loop.id, iteration: loop.iteration },
+			);
+			ctx.ui.notify(`Loop ${loop.id} complete after ${loop.iteration} iteration(s).`, "info");
+			return;
+		}
+
 		this.appendRalphiEvent("loop_iteration_starting", {
 			loopId: loop.id,
 			iteration: nextIteration,
@@ -1314,13 +1377,14 @@ Loop context:
 		const run = this.phaseRuns.get(runId);
 		if (!run || run.status !== "running") return;
 
-		let toolHint = `\n[RALPHI PHASE]\nYou are executing ${run.phase} (runId=${run.id}).\nContinue collaborating with the user until this phase is complete.\nWhen complete, call tool ralphi_phase_done with:\n{\n  \"runId\": \"${run.id}\",\n  \"phase\": \"${run.phase}\",\n  \"summary\": \"...\",\n  \"outputs\": [\"path1\", \"path2\"]${run.phase === "ralphi-loop-iteration" ? ',\n  \"complete\": false' : ""}\n}\nDo not call the tool early.`;
+		let toolHint = `\n[RALPHI PHASE]\nYou are executing ${run.phase} (runId=${run.id}).\nContinue collaborating with the user until this phase is complete.\nWhen complete, call tool ralphi_phase_done with:\n{\n  \"runId\": \"${run.id}\",\n  \"phase\": \"${run.phase}\",\n  \"summary\": \"...\",\n  \"outputs\": [\"path1\", \"path2\"]\n}\nDo not call the tool early.`;
 
 		if (run.phase !== "ralphi-loop-iteration") {
 			toolHint += `\n\nThe ralphi_ask_user_question tool is available to ask the user structured questions with selectable options (single/multi-select). Use it to gather requirements or clarifications interactively.`;
 		}
 
 		if (run.phase === "ralphi-loop-iteration") {
+			toolHint += `\n\n[LOOP COMPLETION RULE]\nWhen calling ralphi_phase_done for loop iterations:\n- Set complete=false (or omit complete) while PRD stories remain with passes=false.\n- Set complete=true as soon as no user stories remain with passes=false in prd.json (or loop goals are fully done).`;
 			const guidanceData = this.loadLoopGuidanceData(ctx.cwd);
 			if (guidanceData.guidance) {
 				toolHint += `\n\n[PROJECT LOOP GUIDANCE]\nProject-local guidance found at ${LOOP_GUIDANCE_FILE_PATH}. Follow these preferences during this loop iteration unless the user explicitly overrides:\n${guidanceData.guidance}`;

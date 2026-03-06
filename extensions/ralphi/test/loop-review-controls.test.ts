@@ -178,4 +178,23 @@ describe("optional advanced loop review controls", () => {
 			fs.rmSync(tempDir, { recursive: true, force: true });
 		}
 	});
+
+	it("adds explicit loop completion guidance for complete=true when no pending stories remain", async () => {
+		const tempDir = createTempDir();
+		try {
+			const sessionManager = createMockSessionManager();
+			const api = createMockExtensionApi(sessionManager);
+			const runtime = new RalphiRuntime(api as any);
+			const ctx = createMockCommandContext({ sessionManager, cwd: tempDir });
+
+			await runtime.startLoop(ctx as any, "--max-iterations 2");
+			const injected = runtime.handleBeforeAgentStart({ systemPrompt: "base prompt" } as any, ctx as any);
+
+			expect(injected).toBeDefined();
+			expect(injected!.systemPrompt).toContain("[LOOP COMPLETION RULE]");
+			expect(injected!.systemPrompt).toContain("Set complete=true");
+		} finally {
+			fs.rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
 });
