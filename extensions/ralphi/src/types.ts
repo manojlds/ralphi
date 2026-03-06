@@ -23,6 +23,7 @@ export interface PhaseRun {
 	checkpointSessionFile?: string;
 	cwd: string;
 	createdAt: string;
+	completedAt?: string;
 	summary?: string;
 	outputs?: string[];
 	complete?: boolean;
@@ -45,6 +46,8 @@ export interface LoopRun {
 	active: boolean;
 	stopRequested: boolean;
 	createdAt: string;
+	completedAt?: string;
+	currentIterationStartedAt?: string;
 	activeIterationSessionFile?: string;
 	iterationSessionFiles: string[];
 }

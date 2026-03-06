@@ -2,19 +2,30 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-// Signal to other extensions that a ralphi tree collapse is in progress.
-// Well-behaved extensions can check this and skip interactive prompts.
-declare global {
-	var __ralphiCollapseInProgress: boolean | undefined;
-}
-
 import type {
 	BeforeAgentStartEvent,
 	ExtensionAPI,
 	ExtensionCommandContext,
 	ExtensionContext,
 } from "@mariozechner/pi-coding-agent";
-import { parseMaxIterations, renderOutputs } from "./helpers";
+import { renderOutputs } from "./helpers";
+import { formatDuration } from "./time";
+import {
+	type LoopConfigData,
+	type LoopReflectionConfig,
+	type ReflectionCheckpointInfo,
+	DEFAULT_LOOP_REVIEW_CONTROLS,
+	hasAdvancedLoopReviewControls as hasAdvancedReviewControlsFromConfig,
+	hasReflectionConfig as hasReflectionConfigFromConfig,
+	loadLoopConfigData,
+	parseLoopConfigYaml,
+	readLoopConfigYaml,
+	renderLoopConfigSection as renderLoopConfigSectionFromConfig,
+	renderReflectionPromptBlock as renderReflectionPromptBlockFromConfig,
+	reflectionCheckpointInfo as reflectionCheckpointInfoFromConfig,
+	reflectionCountdownLabel as reflectionCountdownLabelFromConfig,
+	upsertLoopSection as upsertLoopConfigSection,
+} from "./loop-config";
 import { buildDeterministicSummary } from "./summary";
 import {
 	type LoopReviewControls,
@@ -25,8 +36,22 @@ import {
 	type PhaseName,
 	type PhaseRun,
 	type RalphiContext,
-	type TrajectoryGuard,
 } from "./types";
+import {
+	type PersistedState,
+	applyPersistedState,
+	latestPersistedStateFromBranch,
+	newerPersistedState,
+	pruneEphemeralRuntimeState,
+	readPersistedStateFile,
+	rebuildActivePhaseBySession,
+	snapshotPersistedState,
+	writePersistedStateFile,
+} from "./runtime-state";
+import { activeLoop } from "./loop-engine";
+import { LoopController } from "./loop-controller";
+import { LoopFinalizer } from "./loop-finalizer";
+import { PhaseController } from "./phase-controller";
 
 const STATE_ENTRY_TYPE = "ralphi-state";
 const CHECKPOINT_ENTRY_TYPE = "ralphi-checkpoint";
@@ -36,57 +61,6 @@ const PRD_FILE_NAME = path.join(".ralphi", "prd.json");
 const PROGRESS_FILE_NAME = path.join(".ralphi", "progress.txt");
 const LAST_BRANCH_FILE_NAME = path.join(".ralphi", ".last-branch");
 const ARCHIVE_DIR_NAME = path.join(".ralphi", "archive");
-const DEFAULT_LOOP_REVIEW_CONTROLS: LoopReviewControls = {
-	reviewPasses: 1,
-	trajectoryGuard: "off",
-};
-
-type LoopReflectionConfig = {
-	reflectEvery: number | null;
-	reflectInstructions: string | null;
-};
-
-const DEFAULT_LOOP_REFLECTION_CONFIG: LoopReflectionConfig = {
-	reflectEvery: null,
-	reflectInstructions: null,
-};
-
-const DEFAULT_REFLECTION_QUESTIONS = [
-	"1) Are we still aligned with the active PRD story scope and acceptance criteria?",
-	"2) What risks, blockers, or drift signals are emerging?",
-	"3) What is the smallest high-confidence plan for the next iteration?",
-].join("\n");
-
-type ReflectionCheckpointInfo = {
-	cadence: number;
-	isCheckpoint: boolean;
-	iterationsUntilNext: number;
-	nextCheckpointIteration: number;
-	instructions: string | null;
-};
-
-type PersistedState = {
-	phaseRuns: PhaseRun[];
-	loops: LoopRun[];
-	savedAt: string;
-};
-
-type PendingStory = {
-	id: string;
-	title: string;
-};
-
-type LoopSelection = {
-	loop?: LoopRun;
-	cancelled?: boolean;
-};
-
-type LoopConfigData = {
-	rules: string[];
-	guidance: string | null;
-	controls: LoopReviewControls;
-	reflection: LoopReflectionConfig;
-};
 
 export class RalphiRuntime {
 	private readonly phaseRuns = new Map<string, PhaseRun>();
@@ -95,10 +69,68 @@ export class RalphiRuntime {
 	private readonly commandContextByRun = new Map<string, ExtensionCommandContext>();
 	private readonly pendingFinalizeRuns = new Set<string>();
 	private _suppressEventRestore = false;
-	private currentlyFinalizingRun: PhaseRun | null = null;
-	private skipNextCompact = false;
+	private readonly loopController: LoopController;
+	private readonly loopFinalizer: LoopFinalizer;
+	private readonly phaseController: PhaseController;
 
-	constructor(private readonly pi: ExtensionAPI) {}
+	constructor(private readonly pi: ExtensionAPI) {
+		this.loopController = new LoopController({
+			loops: this.loops,
+			phaseRuns: this.phaseRuns,
+			activePhaseBySession: this.activePhaseBySession,
+			commandContextByRun: this.commandContextByRun,
+			restoreStateFromSession: (ctx) => this.restoreStateFromSession(ctx),
+			persistState: (ctx) => this.persistState(ctx),
+			updateLoopStatusLine: (ctx) => this.updateLoopStatusLine(ctx),
+			deactivateLoop: (loop) => this.deactivateLoop(loop),
+			appendRalphiEvent: (kind, data) => this.appendRalphiEvent(kind, data),
+			sendProgressMessage: (text, details) => this.sendProgressMessage(text, details),
+			sendUserMessage: (ctx, text, deliveryWhenBusy) => this.sendUserMessage(ctx, text, deliveryWhenBusy),
+			appendLoopAutoCompletionNote: (cwd, loopId, iteration) => this.appendLoopAutoCompletionNote(cwd, loopId, iteration),
+			ensureProgressFileForCurrentPrd: (cwd) => this.ensureProgressFileForCurrentPrd(cwd),
+			reflectionCheckpointInfo: (cwd, iteration) => this.reflectionCheckpointInfo(cwd, iteration),
+			renderReflectionPromptBlock: (iteration, info) => this.renderReflectionPromptBlock(iteration, info),
+			sessionKey: (ctx) => this.sessionKey(ctx),
+			shortId: (prefix) => this.shortId(prefix),
+			setSessionName: (name) => this.pi.setSessionName(name),
+			setLabel: (targetId, label) => this.pi.setLabel(targetId, label),
+			setSuppressEventRestore: (value) => {
+				this._suppressEventRestore = value;
+			},
+			prdFileName: PRD_FILE_NAME,
+			progressFileName: PROGRESS_FILE_NAME,
+		});
+		this.loopFinalizer = new LoopFinalizer({
+			phaseRuns: this.phaseRuns,
+			loops: this.loops,
+			setSuppressEventRestore: (value) => {
+				this._suppressEventRestore = value;
+			},
+			persistState: (ctx) => this.persistState(ctx),
+			updateLoopStatusLine: (ctx) => this.updateLoopStatusLine(ctx),
+			deactivateLoop: (loop) => this.deactivateLoop(loop),
+			appendRalphiEvent: (kind, data) => this.appendRalphiEvent(kind, data),
+			sendProgressMessage: (text, details) => this.sendProgressMessage(text, details),
+			runLoopIteration: (ctx, loopId) => this.loopController.runLoopIteration(ctx, loopId),
+		});
+		this.phaseController = new PhaseController({
+			phaseRuns: this.phaseRuns,
+			activePhaseBySession: this.activePhaseBySession,
+			commandContextByRun: this.commandContextByRun,
+			restoreStateFromSession: (ctx) => this.restoreStateFromSession(ctx),
+			sessionKey: (ctx) => this.sessionKey(ctx),
+			shortId: (prefix) => this.shortId(prefix),
+			sendUserMessage: (ctx, text, deliveryWhenBusy) => this.sendUserMessage(ctx, text, deliveryWhenBusy),
+			appendRalphiEvent: (kind, data) => this.appendRalphiEvent(kind, data),
+			persistState: (ctx) => this.persistState(ctx),
+			setLabel: (targetId, label) => this.pi.setLabel(targetId, label),
+			appendEntry: (customType, data) => this.pi.appendEntry(customType, data),
+			setSuppressEventRestore: (value) => {
+				this._suppressEventRestore = value;
+			},
+			checkpointEntryType: CHECKPOINT_ENTRY_TYPE,
+		});
+	}
 
 	private sessionKey(ctx: RalphiContext): string {
 		const sessionFile = ctx.sessionManager.getSessionFile();
@@ -162,73 +194,15 @@ export class RalphiRuntime {
 	}
 
 	private snapshotState(): PersistedState {
-		return {
-			phaseRuns: [...this.phaseRuns.values()],
-			loops: [...this.loops.values()],
-			savedAt: new Date().toISOString(),
-		};
+		return snapshotPersistedState(this.phaseRuns, this.loops);
 	}
 
 	private rebuildIndexes() {
-		this.activePhaseBySession.clear();
-		for (const run of this.phaseRuns.values()) {
-			if (run.status === "running") {
-				this.activePhaseBySession.set(run.sessionKey, run.id);
-			}
-		}
+		rebuildActivePhaseBySession(this.phaseRuns, this.activePhaseBySession);
 	}
 
 	private pruneEphemeralState() {
-		for (const runId of this.commandContextByRun.keys()) {
-			if (!this.phaseRuns.has(runId)) {
-				this.commandContextByRun.delete(runId);
-			}
-		}
-		for (const runId of this.pendingFinalizeRuns) {
-			const run = this.phaseRuns.get(runId);
-			if (!run || run.status !== "awaiting_finalize") {
-				this.pendingFinalizeRuns.delete(runId);
-			}
-		}
-	}
-
-	private findCheckpointEntryId(ctx: RalphiContext, runId: string): string | null {
-		const sources = [ctx.sessionManager.getEntries(), ctx.sessionManager.getBranch()];
-		for (const entries of sources) {
-			for (let i = entries.length - 1; i >= 0; i--) {
-				const entry = entries[i] as any;
-				if (entry?.type !== "custom") continue;
-				if (entry?.customType !== CHECKPOINT_ENTRY_TYPE) continue;
-				if (entry?.data?.runId !== runId) continue;
-				if (typeof entry?.id === "string" && entry.id.length > 0) return entry.id;
-			}
-		}
-		return null;
-	}
-
-	private ensureCheckpointLeafId(ctx: RalphiContext, runId: string, phase: NonLoopPhaseName): string | null {
-		const existingLeaf = ctx.sessionManager.getLeafId();
-		if (existingLeaf) return existingLeaf;
-
-		this.pi.appendEntry(CHECKPOINT_ENTRY_TYPE, {
-			runId,
-			phase,
-			createdAt: new Date().toISOString(),
-			note: "Synthetic checkpoint for ralphi phase rewind",
-		});
-
-		const leafAfterAppend = ctx.sessionManager.getLeafId();
-		if (leafAfterAppend) return leafAfterAppend;
-
-		const checkpointEntryId = this.findCheckpointEntryId(ctx, runId);
-		if (checkpointEntryId) return checkpointEntryId;
-
-		const latestEntry = ctx.sessionManager.getEntries().at(-1) as any;
-		return typeof latestEntry?.id === "string" ? latestEntry.id : null;
-	}
-
-	private stateFile(cwd: string): string {
-		return path.join(cwd, STATE_FILE_PATH);
+		pruneEphemeralRuntimeState(this.phaseRuns, this.commandContextByRun, this.pendingFinalizeRuns);
 	}
 
 	private configFile(cwd: string): string {
@@ -354,250 +328,35 @@ export class RalphiRuntime {
 	}
 
 	private readConfigYaml(cwd: string): string | null {
-		const file = this.configFile(cwd);
-		if (!fs.existsSync(file)) return null;
-
-		try {
-			return fs.readFileSync(file, "utf8");
-		} catch {
-			return null;
-		}
-	}
-
-	private unquoteYaml(value: string): string {
-		const trimmed = value.trim();
-		if (
-			(trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-			(trimmed.startsWith("'") && trimmed.endsWith("'"))
-		) {
-			return trimmed.slice(1, -1);
-		}
-		return trimmed;
-	}
-
-	private parseTrajectoryGuard(value: string): TrajectoryGuard | null {
-		const normalized = value
-			.trim()
-			.toLowerCase()
-			.replace(/[\s-]+/g, "_");
-		if (normalized === "off" || normalized === "none") return "off";
-		if (normalized === "warn" || normalized === "warn_on_drift") return "warn_on_drift";
-		if (
-			normalized === "require" ||
-			normalized === "require_plan" ||
-			normalized === "require_corrective_plan"
-		) {
-			return "require_corrective_plan";
-		}
-		return null;
+		return readLoopConfigYaml(cwd, CONFIG_FILE_PATH);
 	}
 
 	private parseConfigYaml(raw: string): LoopConfigData {
-		const config: LoopConfigData = {
-			rules: [],
-			guidance: null,
-			controls: { ...DEFAULT_LOOP_REVIEW_CONTROLS },
-			reflection: { ...DEFAULT_LOOP_REFLECTION_CONFIG },
-		};
-
-		const lines = raw.replace(/\r\n/g, "\n").split("\n");
-		let section = "";
-		let loopTextTarget: "none" | "guidance" | "reflectinstructions" = "none";
-		let loopTextMode: "none" | "list" | "block" = "none";
-		const guidanceLines: string[] = [];
-		const reflectInstructionLines: string[] = [];
-
-		const resetLoopTextCapture = () => {
-			loopTextTarget = "none";
-			loopTextMode = "none";
-		};
-
-		const targetTextLines = () => {
-			if (loopTextTarget === "guidance") return guidanceLines;
-			if (loopTextTarget === "reflectinstructions") return reflectInstructionLines;
-			return null;
-		};
-
-		for (const line of lines) {
-			const trimmed = line.trim();
-			if (!trimmed || trimmed.startsWith("#")) continue;
-			const indent = line.length - line.trimStart().length;
-
-			if (indent === 0) {
-				const topLevel = trimmed.match(/^([\w-]+)\s*:\s*(.*)$/);
-				section = topLevel ? topLevel[1] : "";
-				resetLoopTextCapture();
-				continue;
-			}
-
-			if (section === "rules") {
-				const listItem = trimmed.match(/^-\s+(.+)$/);
-				if (listItem) {
-					config.rules.push(this.unquoteYaml(listItem[1]));
-				}
-				continue;
-			}
-
-			if (section !== "loop") continue;
-
-			if (indent <= 2) {
-				const kv = trimmed.match(/^([\w-]+)\s*:\s*(.*)$/);
-				if (!kv) {
-					resetLoopTextCapture();
-					continue;
-				}
-
-				const key = kv[1].toLowerCase();
-				const value = kv[2].trim();
-				if (key === "reviewpasses") {
-					const parsed = Number.parseInt(this.unquoteYaml(value), 10);
-					if (Number.isFinite(parsed) && parsed > 0) {
-						config.controls.reviewPasses = parsed;
-					}
-					resetLoopTextCapture();
-					continue;
-				}
-				if (key === "trajectoryguard") {
-					const guard = this.parseTrajectoryGuard(this.unquoteYaml(value));
-					if (guard) config.controls.trajectoryGuard = guard;
-					resetLoopTextCapture();
-					continue;
-				}
-				if (key === "reflectevery") {
-					const parsed = Number.parseInt(this.unquoteYaml(value), 10);
-					config.reflection.reflectEvery = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-					resetLoopTextCapture();
-					continue;
-				}
-				if (key === "guidance" || key === "reflectinstructions") {
-					const normalizedKey = key as "guidance" | "reflectinstructions";
-					if (!value) {
-						loopTextTarget = normalizedKey;
-						loopTextMode = "list";
-						const linesForKey = normalizedKey === "guidance" ? guidanceLines : reflectInstructionLines;
-						linesForKey.length = 0;
-						continue;
-					}
-					if (value === "|" || value === ">") {
-						loopTextTarget = normalizedKey;
-						loopTextMode = "block";
-						const linesForKey = normalizedKey === "guidance" ? guidanceLines : reflectInstructionLines;
-						linesForKey.length = 0;
-						continue;
-					}
-
-					const resolved = this.unquoteYaml(value) || null;
-					if (normalizedKey === "guidance") {
-						config.guidance = resolved;
-					} else {
-						config.reflection.reflectInstructions = resolved;
-					}
-					resetLoopTextCapture();
-					continue;
-				}
-				resetLoopTextCapture();
-				continue;
-			}
-
-			if (loopTextMode === "list") {
-				const listItem = trimmed.match(/^-\s+(.+)$/);
-				if (!listItem) continue;
-				const linesForTarget = targetTextLines();
-				if (linesForTarget) {
-					linesForTarget.push(this.unquoteYaml(listItem[1]));
-				}
-				continue;
-			}
-
-			if (loopTextMode === "block" && indent >= 4) {
-				const linesForTarget = targetTextLines();
-				if (linesForTarget) {
-					linesForTarget.push(line.slice(4));
-				}
-			}
-		}
-
-		if (!config.guidance && guidanceLines.length > 0) {
-			const compact = guidanceLines.map((part) => part.trim()).filter(Boolean);
-			config.guidance = compact.join("\n") || null;
-		}
-		if (!config.reflection.reflectInstructions && reflectInstructionLines.length > 0) {
-			const compact = reflectInstructionLines.map((part) => part.trim()).filter(Boolean);
-			config.reflection.reflectInstructions = compact.join("\n") || null;
-		}
-
-		return config;
+		return parseLoopConfigYaml(raw);
 	}
 
 	private loadConfigData(cwd: string): LoopConfigData {
-		const raw = this.readConfigYaml(cwd);
-		if (!raw) {
-			return {
-				rules: [],
-				guidance: null,
-				controls: { ...DEFAULT_LOOP_REVIEW_CONTROLS },
-				reflection: { ...DEFAULT_LOOP_REFLECTION_CONFIG },
-			};
-		}
-		return this.parseConfigYaml(raw);
+		return loadLoopConfigData(cwd, CONFIG_FILE_PATH);
 	}
 
 	private hasAdvancedReviewControls(controls: LoopReviewControls): boolean {
-		return controls.reviewPasses > 1 || controls.trajectoryGuard !== "off";
+		return hasAdvancedReviewControlsFromConfig(controls);
 	}
 
 	private hasReflectionConfig(reflection: LoopReflectionConfig): boolean {
-		return reflection.reflectEvery !== null || Boolean(reflection.reflectInstructions?.trim());
+		return hasReflectionConfigFromConfig(reflection);
 	}
 
 	private reflectionCheckpointInfo(cwd: string, iteration: number): ReflectionCheckpointInfo | null {
-		const config = this.loadConfigData(cwd);
-		const cadence = config.reflection.reflectEvery;
-		if (!cadence || cadence <= 0) return null;
-
-		const safeIteration = Number.isFinite(iteration) && iteration > 0 ? Math.floor(iteration) : 0;
-		const remainder = safeIteration % cadence;
-		const isCheckpoint = safeIteration > 0 && remainder === 0;
-		const iterationsUntilNext = isCheckpoint || remainder === 0 ? cadence : cadence - remainder;
-		const nextCheckpointIteration = safeIteration + iterationsUntilNext;
-		const instructions = config.reflection.reflectInstructions?.trim() || null;
-
-		return {
-			cadence,
-			isCheckpoint,
-			iterationsUntilNext,
-			nextCheckpointIteration,
-			instructions,
-		};
+		return reflectionCheckpointInfoFromConfig(cwd, iteration, CONFIG_FILE_PATH);
 	}
 
 	private reflectionCountdownLabel(info: ReflectionCheckpointInfo): string {
-		const unit = info.iterationsUntilNext === 1 ? "iteration" : "iterations";
-		if (info.isCheckpoint) {
-			return `reflection checkpoint now (next in ${info.iterationsUntilNext} ${unit}, iter ${info.nextCheckpointIteration})`;
-		}
-		return `next reflection in ${info.iterationsUntilNext} ${unit} (iter ${info.nextCheckpointIteration})`;
+		return reflectionCountdownLabelFromConfig(info);
 	}
 
 	private renderReflectionPromptBlock(iteration: number, info: ReflectionCheckpointInfo): string {
-		const lines = [
-			"[REFLECTION CHECKPOINT]",
-			`Iteration ${iteration} hit loop.reflectEvery=${info.cadence}. Run a structured reflection pass before implementation continues.`,
-
-			"",
-			info.instructions
-				? `Project reflection instructions (loop.reflectInstructions):\n${info.instructions}`
-				: "Project reflection instructions (loop.reflectInstructions):\n(default template)",
-			"",
-			"Checkpoint questions (answer explicitly):",
-			DEFAULT_REFLECTION_QUESTIONS,
-			"",
-			"Required outputs before calling ralphi_phase_done:",
-			"- reflectionSummary: concise findings and confidence level",
-			"- trajectory: ON_TRACK | RISK | DRIFT (with trajectoryNotes for RISK/DRIFT)",
-			"- nextIterationPlan: concrete, ordered next steps",
-		];
-		return lines.join("\n");
+		return renderReflectionPromptBlockFromConfig(iteration, info);
 	}
 
 	private renderLoopConfigSection(
@@ -605,89 +364,23 @@ export class RalphiRuntime {
 		controls: LoopReviewControls,
 		reflection: LoopReflectionConfig,
 	): string[] {
-		const lines: string[] = ["loop:"];
-		if (guidance && guidance.trim().length > 0) {
-			lines.push(`  guidance: ${JSON.stringify(guidance.trim())}`);
-		}
-		lines.push(`  reviewPasses: ${controls.reviewPasses}`);
-		lines.push(`  trajectoryGuard: ${JSON.stringify(controls.trajectoryGuard)}`);
-		if (reflection.reflectEvery !== null) {
-			lines.push(`  reflectEvery: ${reflection.reflectEvery}`);
-		}
-		if (reflection.reflectInstructions && reflection.reflectInstructions.trim().length > 0) {
-			lines.push(`  reflectInstructions: ${JSON.stringify(reflection.reflectInstructions.trim())}`);
-		}
-		return lines;
+		return renderLoopConfigSectionFromConfig(guidance, controls, reflection);
 	}
 
 	private upsertLoopSection(raw: string, sectionLines: string[] | null): string {
-		const normalized = raw.replace(/\r\n/g, "\n");
-		const lines = normalized.split("\n");
-		let start = -1;
-		for (let i = 0; i < lines.length; i++) {
-			if (lines[i].trim() === "loop:") {
-				start = i;
-				break;
-			}
-		}
-
-		if (start === -1) {
-			if (!sectionLines) return normalized.endsWith("\n") ? normalized : `${normalized}\n`;
-			const trimmed = normalized.trimEnd();
-			const prefix = trimmed.length > 0 ? `${trimmed}\n\n` : "";
-			return `${prefix}${sectionLines.join("\n")}\n`;
-		}
-
-		let end = start + 1;
-		for (; end < lines.length; end++) {
-			const line = lines[end];
-			const trimmed = line.trim();
-			if (!trimmed) continue;
-			const indent = line.length - line.trimStart().length;
-			if (indent === 0) break;
-		}
-
-		const before = lines.slice(0, start);
-		const after = lines.slice(end);
-		const merged = sectionLines ? [...before, ...sectionLines, ...after] : [...before, ...after];
-		return `${merged.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd()}\n`;
+		return upsertLoopConfigSection(raw, sectionLines);
 	}
 
 	private readStateFile(cwd: string): PersistedState | null {
-		try {
-			const raw = fs.readFileSync(this.stateFile(cwd), "utf8");
-			const parsed = JSON.parse(raw) as Partial<PersistedState>;
-			if (!Array.isArray(parsed.phaseRuns) || !Array.isArray(parsed.loops)) return null;
-			return {
-				phaseRuns: parsed.phaseRuns as PhaseRun[],
-				loops: parsed.loops as LoopRun[],
-				savedAt: String(parsed.savedAt ?? ""),
-			};
-		} catch {
-			return null;
-		}
+		return readPersistedStateFile(cwd, STATE_FILE_PATH);
 	}
 
 	private writeStateFile(cwd: string, state: PersistedState) {
-		try {
-			const file = this.stateFile(cwd);
-			fs.mkdirSync(path.dirname(file), { recursive: true });
-			const tmp = `${file}.tmp.${process.pid}.${Math.random().toString(16).slice(2)}`;
-			fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
-			fs.renameSync(tmp, file);
-		} catch {
-			// best-effort mirror for cross-session visibility
-		}
+		writePersistedStateFile(cwd, STATE_FILE_PATH, state);
 	}
 
 	private newerState(a: PersistedState | null, b: PersistedState | null): PersistedState | null {
-		if (!a) return b;
-		if (!b) return a;
-		const aTime = Date.parse(a.savedAt);
-		const bTime = Date.parse(b.savedAt);
-		if (!Number.isFinite(aTime)) return b;
-		if (!Number.isFinite(bTime)) return a;
-		return bTime >= aTime ? b : a;
+		return newerPersistedState(a, b);
 	}
 
 	private persistState(ctx: RalphiContext) {
@@ -698,435 +391,99 @@ export class RalphiRuntime {
 	}
 
 	private restoreStateFromSession(ctx: RalphiContext) {
-		const branch = ctx.sessionManager.getBranch();
-		let branchLatest: PersistedState | null = null;
-
-		for (const entry of branch) {
-			if (entry.type !== "custom") continue;
-			if (entry.customType !== STATE_ENTRY_TYPE) continue;
-			const data = entry.data as Partial<PersistedState> | undefined;
-			if (!data) continue;
-			if (!Array.isArray(data.phaseRuns) || !Array.isArray(data.loops)) continue;
-			branchLatest = {
-				phaseRuns: data.phaseRuns as PhaseRun[],
-				loops: data.loops as LoopRun[],
-				savedAt: String(data.savedAt ?? ""),
-			};
-		}
-
+		const branchLatest = latestPersistedStateFromBranch(ctx.sessionManager.getBranch(), STATE_ENTRY_TYPE);
 		const fileLatest = this.readStateFile(ctx.cwd);
 		const latest = this.newerState(branchLatest, fileLatest);
 
-		this.phaseRuns.clear();
-		this.loops.clear();
-		if (latest) {
-			for (const run of latest.phaseRuns) {
-				this.phaseRuns.set(run.id, run);
-			}
-			for (const loop of latest.loops) {
-				this.loops.set(loop.id, loop);
-			}
-		}
+		applyPersistedState(latest, this.phaseRuns, this.loops);
 		this.rebuildIndexes();
 		this.pruneEphemeralState();
 		this.updateLoopStatusLine(ctx);
 	}
 
-	private activeLoop(): LoopRun | undefined {
-		return [...this.loops.values()].find((loop) => loop.active);
-	}
-
-	private findLoop(requested: string): LoopRun | undefined {
-		if (requested.trim()) return this.loops.get(requested.trim());
-		return this.activeLoop();
-	}
-
-	private sortedLoops(): LoopRun[] {
-		return [...this.loops.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-	}
-
-	private loopOptionLabel(loop: LoopRun): string {
-		const state = loop.active ? "active" : "inactive";
-		const stopping = loop.stopRequested ? ", stopping" : "";
-		return `${loop.id} — iter ${loop.iteration}/${loop.maxIterations} (${state}${stopping})`;
-	}
-
-	private async resolveLoopSelection(
-		ctx: ExtensionCommandContext,
-		requested: string,
-		selectTitle: string,
-	): Promise<LoopSelection> {
-		const requestedId = requested.trim();
-		if (requestedId) {
-			return { loop: this.loops.get(requestedId) };
-		}
-
-		const loops = this.sortedLoops();
-		if (loops.length === 0) return {};
-		if (!ctx.hasUI || loops.length === 1) {
-			return { loop: this.activeLoop() ?? loops[0] };
-		}
-
-		const optionToLoop = new Map<string, LoopRun>();
-		const options = loops.map((loop) => {
-			const option = this.loopOptionLabel(loop);
-			optionToLoop.set(option, loop);
-			return option;
-		});
-
-		const selected = await ctx.ui.select(selectTitle, options);
-		if (!selected) return { cancelled: true };
-		return { loop: optionToLoop.get(selected) };
-	}
-
-	private parsePriority(value: unknown): number {
-		if (typeof value === "number" && Number.isFinite(value)) return value;
-		if (typeof value === "string") {
-			const parsed = Number.parseInt(value, 10);
-			if (Number.isFinite(parsed)) return parsed;
-		}
-		return Number.MAX_SAFE_INTEGER;
-	}
-
-	private truncateTitle(title: string, maxLength = 48): string {
-		const compact = title.replace(/\s+/g, " ").trim();
-		if (compact.length <= maxLength) return compact;
-		return `${compact.slice(0, maxLength - 1)}…`;
-	}
-
-	private nextPendingStory(cwd: string): PendingStory | null {
-		const prdPath = this.prdFile(cwd);
-		if (!fs.existsSync(prdPath)) return null;
-
-		try {
-			const parsed = JSON.parse(fs.readFileSync(prdPath, "utf8")) as { userStories?: unknown };
-			if (!parsed || !Array.isArray(parsed.userStories)) return null;
-
-			const pending = parsed.userStories
-				.filter((story): story is Record<string, unknown> => Boolean(story) && typeof story === "object")
-				.filter((story) => story.passes !== true)
-				.map((story) => ({
-					id: typeof story.id === "string" ? story.id.trim() : "",
-					title: typeof story.title === "string" ? story.title.trim() : "",
-					priority: this.parsePriority(story.priority),
-				}))
-				.filter((story) => story.id.length > 0 && story.title.length > 0)
-				.sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id));
-
-			if (pending.length === 0) return null;
-			return { id: pending[0].id, title: pending[0].title };
-		} catch {
-			return null;
-		}
-	}
-
-	/**
-	 * Returns:
-	 * - true  => PRD exists and has at least one story with passes !== true
-	 * - false => PRD exists and all stories are passes === true
-	 * - undefined => PRD missing/unreadable/invalid shape (unknown, keep loop behavior unchanged)
-	 */
-	private hasRemainingPrdStories(cwd: string): boolean | undefined {
-		const prdPath = this.prdFile(cwd);
-		if (!fs.existsSync(prdPath)) return undefined;
-
-		try {
-			const parsed = JSON.parse(fs.readFileSync(prdPath, "utf8")) as { userStories?: unknown };
-			if (!parsed || !Array.isArray(parsed.userStories)) return undefined;
-
-			return parsed.userStories
-				.filter((story): story is Record<string, unknown> => Boolean(story) && typeof story === "object")
-				.some((story) => story.passes !== true);
-		} catch {
-			return undefined;
-		}
-	}
-
-	private buildIterationSessionName(loop: LoopRun, story: PendingStory | null): string {
-		if (!story) return `ralphi loop ${loop.id} · iter ${loop.iteration}`;
-		return `ralphi loop ${loop.id} · iter ${loop.iteration} · ${story.id} ${this.truncateTitle(story.title)}`;
-	}
-
-	private updatePhaseStatusLine(ctx: RalphiContext) {
+	private currentPhaseRunForSession(ctx: RalphiContext): PhaseRun | undefined {
 		const key = this.sessionKey(ctx);
-		const current = [...this.phaseRuns.values()]
+		return [...this.phaseRuns.values()]
 			.filter((run) => run.sessionKey === key && run.status !== "completed")
 			.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
 			.at(-1);
+	}
+
+	private updatePhaseStatusLine(ctx: RalphiContext) {
+		const current = this.currentPhaseRunForSession(ctx);
 		if (!current) {
 			ctx.ui.setStatus("ralphi-phase", undefined);
 			return;
 		}
 		const status = current.status === "awaiting_finalize" ? "awaiting finalize" : "running";
-		ctx.ui.setStatus("ralphi-phase", `🧩 ${current.phase} ${current.id} (${status})`);
+		const elapsed = formatDuration(current.createdAt);
+		ctx.ui.setStatus("ralphi-phase", `🧩 ${current.phase} ${current.id} (${status}${elapsed ? ` · ${elapsed}` : ""})`);
+	}
+
+	private updateTimingWidget(ctx: RalphiContext) {
+		if (!ctx.hasUI) return;
+		const ui = ctx.ui as unknown as { setWidget?: (key: string, content: string[] | undefined, options?: { placement?: "aboveEditor" | "belowEditor" }) => void };
+		if (typeof ui.setWidget !== "function") return;
+
+		const loop = activeLoop(this.loops);
+		const phase = this.currentPhaseRunForSession(ctx);
+		if (!loop && !phase) {
+			ui.setWidget("ralphi-timing", undefined);
+			return;
+		}
+
+		const segments: string[] = [];
+		if (loop) {
+			const elapsed = formatDuration(loop.createdAt) ?? "0s";
+			const iterationElapsed = loop.currentIterationStartedAt ? formatDuration(loop.currentIterationStartedAt) : null;
+			segments.push(`🔁 ${loop.id} ${loop.iteration}/${loop.maxIterations} · ${elapsed}${iterationElapsed ? ` · iter ${iterationElapsed}` : ""}`);
+		}
+		if (phase) {
+			const status = phase.status === "awaiting_finalize" ? "awaiting finalize" : "running";
+			const elapsed = formatDuration(phase.createdAt);
+			segments.push(`🧩 ${phase.phase} ${phase.id} · ${status}${elapsed ? ` · ${elapsed}` : ""}`);
+		}
+
+		ui.setWidget("ralphi-timing", [`ralphi ⏱ ${segments.join("  |  ")}`], { placement: "belowEditor" });
 	}
 
 	private updateLoopStatusLine(ctx: RalphiContext) {
-		const loop = this.activeLoop();
+		const loop = activeLoop(this.loops);
 		if (!loop) {
 			ctx.ui.setStatus("ralphi-loop", undefined);
 		} else {
 			const reflectionInfo = this.reflectionCheckpointInfo(ctx.cwd, loop.iteration);
 			const reflectionSuffix = reflectionInfo ? ` · ${this.reflectionCountdownLabel(reflectionInfo)}` : "";
 			const stoppingSuffix = loop.stopRequested ? " · stopping" : "";
-			ctx.ui.setStatus("ralphi-loop", `🔁 ${loop.id} ${loop.iteration}/${loop.maxIterations}${reflectionSuffix}${stoppingSuffix}`);
+			const elapsed = formatDuration(loop.createdAt);
+			const elapsedSuffix = elapsed ? ` · ${elapsed}` : "";
+			const iterationElapsed = loop.currentIterationStartedAt ? formatDuration(loop.currentIterationStartedAt) : null;
+			const iterationSuffix = iterationElapsed ? ` · iter ${iterationElapsed}` : "";
+			ctx.ui.setStatus("ralphi-loop", `🔁 ${loop.id} ${loop.iteration}/${loop.maxIterations}${elapsedSuffix}${iterationSuffix}${reflectionSuffix}${stoppingSuffix}`);
 		}
 		this.updatePhaseStatusLine(ctx);
+		this.updateTimingWidget(ctx);
+	}
+
+	private deactivateLoop(loop: LoopRun) {
+		if (!loop.completedAt) {
+			loop.completedAt = new Date().toISOString();
+		}
+		loop.active = false;
+		loop.activeIterationSessionFile = undefined;
+		loop.currentIterationStartedAt = undefined;
 	}
 
 	private async finalizeNonLoopRun(run: PhaseRun, ctx: ExtensionCommandContext) {
-		const outputs = renderOutputs(run.cwd, run.outputs);
-		let confirmed = true;
-
-		if (!run.autoConfirm && ctx.hasUI) {
-			const message = [
-				`Phase: ${run.phase}`,
-				`Run: ${run.id}`,
-				"",
-				"Summary:",
-				run.summary ?? "(none)",
-				"",
-				"Outputs:",
-				...outputs.lines,
-				"",
-				"Summarize branch and return to checkpoint?",
-			].join("\n");
-			confirmed = await ctx.ui.confirm("Finalize ralphi phase", message);
-		}
-
-		if (!confirmed) {
-			this.appendRalphiEvent("phase_finalize_cancelled", { runId: run.id, phase: run.phase });
-			this.persistState(ctx);
-			ctx.ui.notify(`Finalize cancelled for ${run.id}. Run /ralphi-finalize ${run.id} again when ready.`, "info");
-			return;
-		}
-
-		if (run.checkpointSessionFile && ctx.sessionManager.getSessionFile() !== run.checkpointSessionFile) {
-			this._suppressEventRestore = true;
-			try {
-				const switched = await ctx.switchSession(run.checkpointSessionFile);
-				if (switched.cancelled) {
-					ctx.ui.notify("Could not switch back to checkpoint session.", "error");
-					return;
-				}
-			} finally {
-				this._suppressEventRestore = false;
-			}
-		}
-
-		if (run.checkpointLeafId) {
-			this.currentlyFinalizingRun = run;
-			globalThis.__ralphiCollapseInProgress = true;
-			try {
-				const treeResult = await ctx.navigateTree(run.checkpointLeafId, {
-					summarize: true,
-					label: `ralphi:${run.phase}:summary:${run.id}`,
-				});
-				if (treeResult.cancelled) {
-					ctx.ui.notify("Tree navigation was cancelled; phase remains finalized but context was not rewound.", "warning");
-				} else {
-					// Skip the next auto-compact so it doesn't re-summarize
-					// our deterministic summary via LLM.
-					this.skipNextCompact = true;
-				}
-			} finally {
-				globalThis.__ralphiCollapseInProgress = false;
-				this.currentlyFinalizingRun = null;
-			}
-		} else {
-			ctx.ui.notify("No checkpoint leaf was available to rewind to.", "warning");
-		}
-
-		run.status = "completed";
-		this.appendRalphiEvent("phase_finalized", {
-			runId: run.id,
-			phase: run.phase,
-			summary: run.summary,
-			outputs: run.outputs,
-			missingOutputs: outputs.hasMissing,
-		});
-		this.persistState(ctx);
-		ctx.ui.notify(
-			`Finalized ${run.phase} (${run.id})${outputs.hasMissing ? " — some declared outputs are missing" : ""}`,
-			outputs.hasMissing ? "warning" : "info",
-		);
+		await this.phaseController.finalizeNonLoopRun(run, ctx);
 	}
 
 	private async finalizeLoopRun(run: PhaseRun, ctx: ExtensionCommandContext) {
-		run.status = "completed";
-		this.phaseRuns.set(run.id, run);
-
-		if (!run.loopId) {
-			this.persistState(ctx);
-			ctx.ui.notify(`Loop metadata missing for ${run.id}`, "error");
-			return;
-		}
-
-		const loop = this.loops.get(run.loopId);
-		if (!loop) {
-			this.persistState(ctx);
-			ctx.ui.notify(`Loop ${run.loopId} not found`, "warning");
-			return;
-		}
-
-		if (ctx.sessionManager.getSessionFile() !== loop.controllerSessionFile) {
-			this._suppressEventRestore = true;
-			try {
-				const switched = await ctx.switchSession(loop.controllerSessionFile);
-				if (switched.cancelled) {
-					ctx.ui.notify("Could not switch back to loop controller session.", "error");
-					return;
-				}
-			} finally {
-				this._suppressEventRestore = false;
-			}
-		}
-
-		loop.activeIterationSessionFile = undefined;
-		this.appendRalphiEvent("loop_iteration_finalized", {
-			loopId: loop.id,
-			runId: run.id,
-			iteration: loop.iteration,
-			sessionFile: run.sessionFile,
-			summary: run.summary,
-			outputs: run.outputs,
-			complete: run.complete ?? false,
-			reviewPasses: run.reviewPasses,
-			trajectory: run.trajectory,
-			trajectoryNotes: run.trajectoryNotes,
-			correctivePlan: run.correctivePlan,
-			reflectionSummary: run.reflectionSummary,
-			nextIterationPlan: run.nextIterationPlan,
-		});
-		this.sendProgressMessage(
-			`🔁 ${loop.id}: iteration ${loop.iteration}/${loop.maxIterations} finalized — ${run.summary ?? "(no summary)"}`,
-			{ loopId: loop.id, runId: run.id, iteration: loop.iteration },
-		);
-		if (run.trajectory === "DRIFT") {
-			this.sendProgressMessage(
-				`⚠️ ${loop.id}: trajectory DRIFT signaled on iteration ${loop.iteration}. Next step: execute corrective plan before closing the related story.`,
-				{
-					loopId: loop.id,
-					runId: run.id,
-					iteration: loop.iteration,
-					trajectory: run.trajectory,
-					correctivePlan: run.correctivePlan ?? null,
-				},
-			);
-		}
-		this.persistState(ctx);
-
-		if (run.complete) {
-			loop.active = false;
-			loop.activeIterationSessionFile = undefined;
-			this.updateLoopStatusLine(ctx);
-			this.appendRalphiEvent("loop_completed", { loopId: loop.id, iteration: loop.iteration });
-			this.persistState(ctx);
-			this.sendProgressMessage(
-				`✅ Loop ${loop.id} complete after ${loop.iteration} iteration(s).`,
-				{ loopId: loop.id, iteration: loop.iteration },
-			);
-			ctx.ui.notify(`Loop ${loop.id} complete after ${loop.iteration} iteration(s).`, "info");
-			return;
-		}
-
-		if (loop.stopRequested) {
-			loop.active = false;
-			loop.activeIterationSessionFile = undefined;
-			this.updateLoopStatusLine(ctx);
-			this.appendRalphiEvent("loop_stopped", { loopId: loop.id, iteration: loop.iteration });
-			this.persistState(ctx);
-			this.sendProgressMessage(
-				`🛑 Loop ${loop.id} stopped by user after iteration ${loop.iteration}.`,
-				{ loopId: loop.id, iteration: loop.iteration },
-			);
-			ctx.ui.notify(`Loop ${loop.id} stopped by user after iteration ${loop.iteration}.`, "info");
-			return;
-		}
-
-		if (loop.iteration >= loop.maxIterations) {
-			loop.active = false;
-			loop.activeIterationSessionFile = undefined;
-			this.updateLoopStatusLine(ctx);
-			this.appendRalphiEvent("loop_max_iterations", {
-				loopId: loop.id,
-				iteration: loop.iteration,
-				maxIterations: loop.maxIterations,
-			});
-			this.persistState(ctx);
-			this.sendProgressMessage(
-				`⚠️ Loop ${loop.id} reached max iterations (${loop.maxIterations}).`,
-				{ loopId: loop.id, iteration: loop.iteration, maxIterations: loop.maxIterations },
-			);
-			ctx.ui.notify(`Loop ${loop.id} reached max iterations (${loop.maxIterations}).`, "warning");
-			return;
-		}
-
-		this.updateLoopStatusLine(ctx);
-		await this.runLoopIteration(ctx, loop.id);
+		await this.loopFinalizer.finalizeLoopRun(run, ctx);
 	}
 
 	async startPhase(ctx: ExtensionCommandContext, phase: NonLoopPhaseName, args: string) {
-		this.restoreStateFromSession(ctx);
-
-		if (!ctx.isIdle()) {
-			ctx.ui.notify("Agent is busy — wait for it to finish before starting a ralphi phase.", "error");
-			return;
-		}
-
-		const key = this.sessionKey(ctx);
-		const activeRunId = this.activePhaseBySession.get(key);
-		if (activeRunId) {
-			ctx.ui.notify(`Another ralphi phase is already active in this session (${activeRunId}).`, "warning");
-			return;
-		}
-
-		const runId = this.shortId("run");
-		const checkpointLeafId = this.ensureCheckpointLeafId(ctx, runId, phase);
-		const currentSessionFile = ctx.sessionManager.getSessionFile();
-
-		const run: PhaseRun = {
-			id: runId,
-			phase,
-			status: "running",
-			sessionKey: key,
-			sessionFile: currentSessionFile,
-			checkpointLeafId,
-			checkpointSessionFile: currentSessionFile,
-			cwd: ctx.cwd,
-			createdAt: new Date().toISOString(),
-			autoConfirm: false,
-		};
-
-		this.phaseRuns.set(runId, run);
-		this.commandContextByRun.set(runId, ctx);
-		this.activePhaseBySession.set(key, runId);
-
-		if (checkpointLeafId) {
-			this.pi.setLabel(checkpointLeafId, `ralphi:${phase}:checkpoint:${runId}`);
-		} else {
-			ctx.ui.notify(
-				`Phase ${runId} has no checkpoint leaf; finalize will complete but cannot rewind with /tree semantics.`,
-				"warning",
-			);
-		}
-
-		const kickoff = `Load and execute the ${phase} skill now.
-If skill slash commands are available, you may invoke /skill:${phase}${args.trim().length > 0 ? ` ${args}` : ""}.
-
-Run contract for this phase:
-- Keep collaborating with the user until this phase is truly complete.
-- When complete, call tool ralphi_phase_done with:
-  - runId: "${runId}"
-  - phase: "${phase}"
-  - summary: short summary of what was completed
-  - outputs: list of key files written/updated
-- Only call ralphi_phase_done when the user-facing task is complete.`;
-
-		this.appendRalphiEvent("phase_started", { runId, phase, args: args.trim() || undefined });
-		this.persistState(ctx);
-		ctx.ui.notify(`Started ${phase} (${runId})`, "info");
-		this.sendUserMessage(ctx, kickoff, "steer");
+		await this.phaseController.startPhase(ctx, phase, args);
 	}
 
 	async finalizeRun(ctx: ExtensionCommandContext, runId: string) {
@@ -1161,304 +518,27 @@ Run contract for this phase:
 	}
 
 	async runLoopIteration(ctx: ExtensionCommandContext, loopId: string) {
-		this.restoreStateFromSession(ctx);
-		const loop = this.loops.get(loopId);
-		if (!loop) {
-			ctx.ui.notify(`Loop not found: ${loopId}`, "error");
-			return;
-		}
-		if (!loop.active) {
-			ctx.ui.notify(`Loop ${loopId} is not active.`, "warning");
-			return;
-		}
-		if (loop.stopRequested) {
-			loop.active = false;
-			loop.activeIterationSessionFile = undefined;
-			this.updateLoopStatusLine(ctx);
-			this.appendRalphiEvent("loop_stopped", { loopId: loop.id, iteration: loop.iteration });
-			this.persistState(ctx);
-			ctx.ui.notify(`Loop ${loop.id} stopped.`, "info");
-			return;
-		}
-		if (loop.iteration >= loop.maxIterations) {
-			loop.active = false;
-			loop.activeIterationSessionFile = undefined;
-			this.updateLoopStatusLine(ctx);
-			this.appendRalphiEvent("loop_max_iterations", {
-				loopId: loop.id,
-				iteration: loop.iteration,
-				maxIterations: loop.maxIterations,
-			});
-			this.persistState(ctx);
-			ctx.ui.notify(`Loop ${loop.id} reached max iterations (${loop.maxIterations}).`, "warning");
-			return;
-		}
-
-		this._suppressEventRestore = true;
-		try {
-			if (ctx.sessionManager.getSessionFile() !== loop.controllerSessionFile) {
-				const switched = await ctx.switchSession(loop.controllerSessionFile);
-				if (switched.cancelled) {
-					ctx.ui.notify("Could not switch to loop controller session.", "error");
-					return;
-				}
-			}
-		} finally {
-			this._suppressEventRestore = false;
-		}
-
-		const nextIteration = loop.iteration + 1;
-		const pendingStory = this.nextPendingStory(ctx.cwd);
-		const hasRemainingStories = this.hasRemainingPrdStories(ctx.cwd);
-		if (hasRemainingStories === false) {
-			loop.active = false;
-			loop.activeIterationSessionFile = undefined;
-			this.updateLoopStatusLine(ctx);
-			this.appendRalphiEvent("loop_completed_no_pending_stories", {
-				loopId: loop.id,
-				iteration: loop.iteration,
-			});
-			this.appendLoopAutoCompletionNote(ctx.cwd, loop.id, loop.iteration);
-			this.persistState(ctx);
-			this.sendProgressMessage(
-				`✅ Loop ${loop.id} complete after ${loop.iteration} iteration(s) — no pending PRD stories remain.`,
-				{ loopId: loop.id, iteration: loop.iteration },
-			);
-			ctx.ui.notify(`Loop ${loop.id} complete after ${loop.iteration} iteration(s).`, "info");
-			return;
-		}
-
-		this.appendRalphiEvent("loop_iteration_starting", {
-			loopId: loop.id,
-			iteration: nextIteration,
-			storyId: pendingStory?.id,
-			storyTitle: pendingStory?.title,
-		});
-
-		this._suppressEventRestore = true;
-		try {
-			const child = await ctx.newSession({ parentSession: loop.controllerSessionFile });
-			if (child.cancelled) {
-				ctx.ui.notify("Creating iteration session was cancelled.", "warning");
-				return;
-			}
-		} finally {
-			this._suppressEventRestore = false;
-		}
-
-		loop.iteration += 1;
-		const currentIterationSessionFile = ctx.sessionManager.getSessionFile();
-		loop.activeIterationSessionFile = currentIterationSessionFile;
-		if (currentIterationSessionFile) {
-			loop.iterationSessionFiles.push(currentIterationSessionFile);
-		}
-		this.pi.setSessionName(this.buildIterationSessionName(loop, pendingStory));
-
-		const key = this.sessionKey(ctx);
-		const runId = this.shortId("iter");
-		const run: PhaseRun = {
-			id: runId,
-			phase: "ralphi-loop-iteration",
-			status: "running",
-			sessionKey: key,
-			sessionFile: ctx.sessionManager.getSessionFile(),
-			checkpointLeafId: null,
-			checkpointSessionFile: loop.controllerSessionFile,
-			cwd: ctx.cwd,
-			createdAt: new Date().toISOString(),
-			autoConfirm: true,
-			loopId: loop.id,
-			iteration: loop.iteration,
-		};
-
-		this.phaseRuns.set(runId, run);
-		this.commandContextByRun.set(runId, ctx);
-		this.activePhaseBySession.set(key, runId);
-		this.persistState(ctx);
-
-		const reflectionInfo = this.reflectionCheckpointInfo(ctx.cwd, loop.iteration);
-		const reflectionPromptBlock =
-			reflectionInfo?.isCheckpoint ? this.renderReflectionPromptBlock(loop.iteration, reflectionInfo) : null;
-		const kickoff = `Load and execute the ralphi-loop skill now.
-If skill slash commands are available, you may invoke /skill:ralphi-loop.
-
-Loop context:
-- loopId: ${loop.id}
-- runId: ${run.id}
-- iteration: ${loop.iteration}/${loop.maxIterations}${reflectionPromptBlock ? `\n\n${reflectionPromptBlock}` : ""}`;
-
-		const storyLabel = pendingStory ? ` — ${pendingStory.id}: ${pendingStory.title}` : "";
-		const reflectionLabel = reflectionInfo?.isCheckpoint ? " · reflection checkpoint" : "";
-		this.sendProgressMessage(
-			`🔁 ${loop.id}: starting iteration ${loop.iteration}/${loop.maxIterations}${storyLabel}${reflectionLabel}`,
-			{ loopId: loop.id, runId, iteration: loop.iteration, storyId: pendingStory?.id, reflectionCheckpoint: reflectionInfo?.isCheckpoint ?? false },
-		);
-		ctx.ui.notify(
-			`Loop ${loop.id}: starting iteration ${loop.iteration}/${loop.maxIterations}${reflectionInfo?.isCheckpoint ? " (reflection checkpoint)" : ""}`,
-			"info",
-		);
-		this.updateLoopStatusLine(ctx);
-		this.sendUserMessage(ctx, kickoff, "steer");
+		await this.loopController.runLoopIteration(ctx, loopId);
 	}
 
 	async startLoop(ctx: ExtensionCommandContext, args: string) {
-		this.restoreStateFromSession(ctx);
-
-		if (!ctx.isIdle()) {
-			ctx.ui.notify("Agent is busy — wait for it to finish before starting a ralphi loop.", "error");
-			return;
-		}
-
-		const existing = this.activeLoop();
-		if (existing) {
-			ctx.ui.notify(`Loop already active: ${existing.id}`, "warning");
-			return;
-		}
-
-		const controllerSessionFile = ctx.sessionManager.getSessionFile();
-		if (!controllerSessionFile) {
-			ctx.ui.notify("Loop requires a persisted session file (interactive session).", "error");
-			return;
-		}
-
-		const progressPrep = this.ensureProgressFileForCurrentPrd(ctx.cwd);
-		if (progressPrep.rotated) {
-			const archiveNote = progressPrep.archivePath ? ` Archived prior run data to ${progressPrep.archivePath}.` : "";
-			ctx.ui.notify(
-				`Detected new PRD branch (${progressPrep.branchName ?? "unknown"}); reset ${PROGRESS_FILE_NAME} for a fresh run.${archiveNote}`,
-				"info",
-			);
-		}
-
-		const loopId = this.shortId("loop");
-		const loop: LoopRun = {
-			id: loopId,
-			controllerSessionFile,
-			maxIterations: parseMaxIterations(args),
-			iteration: 0,
-			active: true,
-			stopRequested: false,
-			createdAt: new Date().toISOString(),
-			iterationSessionFiles: [],
-		};
-		this.loops.set(loopId, loop);
-
-		const leaf = ctx.sessionManager.getLeafId();
-		if (leaf) {
-			this.pi.setLabel(leaf, `ralphi:loop:controller:${loopId}`);
-		}
-
-		this.appendRalphiEvent("loop_started", { loopId: loop.id, maxIterations: loop.maxIterations });
-		this.persistState(ctx);
-		ctx.ui.notify(`Started loop ${loop.id} (max ${loop.maxIterations} iterations)`, "info");
-		this.updateLoopStatusLine(ctx);
-		await this.runLoopIteration(ctx, loop.id);
+		await this.loopController.startLoop(ctx, args);
 	}
 
 	async stopLoop(ctx: ExtensionCommandContext, requested: string) {
-		this.restoreStateFromSession(ctx);
-		const loop = this.findLoop(requested);
-		if (!loop) {
-			ctx.ui.notify("No active loop found.", "warning");
-			return;
-		}
-		loop.stopRequested = true;
-		this.appendRalphiEvent("loop_stop_requested", { loopId: loop.id, iteration: loop.iteration });
-		this.persistState(ctx);
-		this.updateLoopStatusLine(ctx);
-		ctx.ui.notify(`Stop requested for loop ${loop.id}. It will stop after current iteration finalizes.`, "info");
+		await this.loopController.stopLoop(ctx, requested);
 	}
 
 	async openLoop(ctx: ExtensionCommandContext, requested: string) {
-		this.restoreStateFromSession(ctx);
-		const selection = await this.resolveLoopSelection(ctx, requested, "Select loop to inspect");
-		if (selection.cancelled) {
-			ctx.ui.notify("Loop selection cancelled.", "info");
-			return;
-		}
-
-		const loop = selection.loop;
-		if (!loop) {
-			const requestedId = requested.trim();
-			ctx.ui.notify(requestedId ? `Loop not found: ${requestedId}` : "No loops found.", "warning");
-			return;
-		}
-
-		const targetSessionFile = loop.activeIterationSessionFile ?? loop.iterationSessionFiles.at(-1);
-		if (!targetSessionFile) {
-			ctx.ui.notify("Loop has no iteration sessions yet.", "warning");
-			return;
-		}
-
-		const switched = await ctx.switchSession(targetSessionFile);
-		if (switched.cancelled) {
-			ctx.ui.notify("Switch to loop session was cancelled.", "warning");
-			return;
-		}
-
-		if (loop.activeIterationSessionFile) {
-			ctx.ui.notify(`Switched to loop iteration session for ${loop.id}.`, "info");
-		} else {
-			ctx.ui.notify(`Switched to most recent iteration session for inactive loop ${loop.id}.`, "info");
-		}
+		await this.loopController.openLoop(ctx, requested);
 	}
 
 	async openLoopController(ctx: ExtensionCommandContext, requested: string) {
-		this.restoreStateFromSession(ctx);
-		const selection = await this.resolveLoopSelection(ctx, requested, "Select loop controller");
-		if (selection.cancelled) {
-			ctx.ui.notify("Loop selection cancelled.", "info");
-			return;
-		}
-
-		const loop = selection.loop;
-		if (!loop) {
-			const requestedId = requested.trim();
-			ctx.ui.notify(requestedId ? `Loop not found: ${requestedId}` : "No loops found.", "warning");
-			return;
-		}
-
-		const switched = await ctx.switchSession(loop.controllerSessionFile);
-		if (switched.cancelled) {
-			ctx.ui.notify("Switch back to controller was cancelled.", "warning");
-			return;
-		}
-		ctx.ui.notify(`Switched to loop controller session for ${loop.id}.`, "info");
+		await this.loopController.openLoopController(ctx, requested);
 	}
 
 	showLoopStatus(ctx: ExtensionCommandContext) {
-		this.restoreStateFromSession(ctx);
-		const activeRuns = [...this.phaseRuns.values()].filter((r) => r.status !== "completed");
-		const activeLoops = [...this.loops.values()].filter((l) => l.active);
-
-		if (activeRuns.length === 0 && activeLoops.length === 0) {
-			ctx.ui.notify("No active ralphi runs.", "info");
-			return;
-		}
-
-		const lines: string[] = [];
-		if (activeLoops.length > 0) {
-			lines.push("Loops:");
-			for (const loop of activeLoops) {
-				const reflectionInfo = this.reflectionCheckpointInfo(ctx.cwd, loop.iteration);
-				const reflectionSuffix = reflectionInfo ? ` · ${this.reflectionCountdownLabel(reflectionInfo)}` : "";
-				lines.push(`- ${loop.id}: iteration ${loop.iteration}/${loop.maxIterations}${loop.stopRequested ? " (stop requested)" : ""}${reflectionSuffix}`);
-				if (loop.activeIterationSessionFile) {
-					lines.push(`  active iteration session: ${loop.activeIterationSessionFile}`);
-				}
-			}
-			lines.push("  use /ralphi-loop-open <loopId> to inspect active iteration session");
-			lines.push("");
-		}
-
-		if (activeRuns.length > 0) {
-			lines.push("Phase runs:");
-			for (const run of activeRuns) {
-				lines.push(`- ${run.id}: ${run.phase} [${run.status}]`);
-			}
-		}
-
-		ctx.ui.notify(lines.join("\n"), "info");
+		this.loopController.showLoopStatus(ctx);
 	}
 
 	showLoopGuidance(ctx: ExtensionCommandContext) {
@@ -1755,6 +835,7 @@ Loop context:
 						true, // fromHook — marks as extension-generated
 					);
 					run.status = "completed";
+					run.completedAt = new Date().toISOString();
 					this.appendRalphiEvent("phase_finalized", {
 						runId: run.id,
 						phase: run.phase,
@@ -1799,22 +880,22 @@ Loop context:
 	}
 
 	handleBeforeTree(event: { preparation: { targetId: string } }): { summary: { summary: string; details: unknown } } | undefined {
-		if (!this.currentlyFinalizingRun) return undefined;
-		if (this.currentlyFinalizingRun.checkpointLeafId !== event.preparation.targetId) return undefined;
+		const run = this.phaseController.getCurrentlyFinalizingRun();
+		if (!run) return undefined;
+		if (run.checkpointLeafId !== event.preparation.targetId) return undefined;
 
-		const summary = buildDeterministicSummary(this.currentlyFinalizingRun);
+		const summary = buildDeterministicSummary(run);
 		if (!summary) return undefined;
 		return {
 			summary: {
 				summary,
-				details: { phase: this.currentlyFinalizingRun.phase, runId: this.currentlyFinalizingRun.id },
+				details: { phase: run.phase, runId: run.id },
 			},
 		};
 	}
 
 	handleBeforeCompact(): { cancel: boolean } | undefined {
-		if (!this.skipNextCompact) return undefined;
-		this.skipNextCompact = false;
+		if (!this.phaseController.consumeSkipNextCompact()) return undefined;
 		return { cancel: true };
 	}
 
