@@ -11,7 +11,7 @@
 - Optional advanced loop controls pattern: use additive front matter in `.ralphi/loop-guidance.md` (`reviewPasses`, `trajectoryGuard`) so stricter gates are opt-in while default behavior remains unchanged
 - Loop config mutation safety pattern: when command helpers rewrite `.ralphi/config.yaml` `loop:` blocks, always preserve additive `loop.*` keys (for example `reflectEvery`, `reflectInstructions`) to avoid silently dropping unrelated settings
 - Reflection checkpoint enforcement pattern: gate checkpoint-only completion requirements in `markPhaseDone` by reusing the shared cadence helper (`reflectionCheckpointInfo`) so validation is deterministic and non-checkpoint/non-loop paths remain unchanged
-- Rollout-safety documentation pattern: capture phase sequencing + go/no-go + rollback policy in `tasks/*.md` and guard it with markdown contract tests under `extensions/ralphi/test`.
+- Rollout-safety documentation pattern: capture phase sequencing + go/no-go + rollback/migration policy in `tasks/*.md`, `README.md`, and `CHANGELOG.md`, then guard it with markdown contract tests under `extensions/ralphi/test`.
 ---
 
 ## 2026-03-04T19:30:00Z - US-001
@@ -244,4 +244,28 @@ Corrective Plan: N/A
 - **Learnings for future iterations:**
   - For checkpoint-gated completion rules, validate requirements in `markPhaseDone` (not startup prompts) so enforcement remains deterministic and auditable even if prompt text drifts
   - Keep checkpoint metadata requirements additive and optional at schema level, then enforce conditionally based on runtime checkpoint state for backward compatibility
+---
+
+## 2026-03-06T04:04:22Z - US-004
+Session: N/A
+Review Outcome: PASS
+Trajectory: ON_TRACK
+Trajectory Notes: N/A
+Corrective Plan: N/A
+- Updated README loop/config documentation with reflection cadence keys (`loop.reflectEvery`, `loop.reflectInstructions`), checkpoint behavior, default-off semantics, and a gradual rollout path
+- Documented checkpoint completion metadata requirements in the `ralphi_phase_done` tool reference (`reflectionSummary`, `nextIterationPlan`)
+- Added changelog release + migration notes for reflection checkpoint documentation rollout
+- Added a markdown contract test to lock README + CHANGELOG reflection documentation expectations
+- Updated shared project guidance (`AGENTS.md` + `progress.txt` Codebase Patterns) to preserve the reusable docs-contract testing pattern for rollout/migration notes
+- Ran `npm run check` (lint + typecheck + unit tests): all pass
+- Ran `npm run build`: pass
+- Files changed:
+  - `README.md`
+  - `CHANGELOG.md`
+  - `extensions/ralphi/test/reflection-docs-migration.test.ts`
+  - `AGENTS.md`
+  - `prd.json`
+  - `progress.txt`
+- **Learnings for future iterations:**
+  - For documentation-focused stories, add lightweight markdown contract tests so key migration language is protected from accidental regressions
 ---

@@ -169,6 +169,8 @@ Optional fields:
 - `trajectory: ON_TRACK | RISK | DRIFT` (loop metadata)
 - `trajectoryNotes: string`
 - `correctivePlan: string` (required when strict DRIFT guard is enabled)
+- `reflectionSummary: string` (required on reflection-checkpoint iterations)
+- `nextIterationPlan: string` (required on reflection-checkpoint iterations)
 
 ## `ralphi_ask_user_question`
 
@@ -204,6 +206,8 @@ loop:
   guidance: "Take a step back each iteration and reassess PRD alignment."
   reviewPasses: 1
   trajectoryGuard: "require_corrective_plan"
+  reflectEvery: 3
+  reflectInstructions: "Reassess PRD alignment, risks, and confidence before coding."
 
 boundaries:
   never_touch:
@@ -224,7 +228,39 @@ max_retries: 3
   - `off`
   - `warn_on_drift`
   - `require_corrective_plan`
+- `loop.reflectEvery`: reflection checkpoint cadence in iterations (default-off when missing or `<= 0`)
+- `loop.reflectInstructions`: optional project-specific checkpoint prompt content
 - `boundaries.never_touch`: files/patterns that must not be modified
+
+### Reflection checkpoints (opt-in, gradual rollout)
+
+Reflection cadence is **disabled by default**. Enable it only when you want checkpoint iterations:
+
+```yaml
+loop:
+  reflectEvery: 3
+```
+
+Checkpoint behavior:
+- Every `N`th iteration (`reflectEvery`) gets a `[REFLECTION CHECKPOINT]` prompt block.
+- `/ralphi-loop-status` shows countdown text (for example, `next reflection in 2 iterations`).
+- At checkpoint completion, `ralphi_phase_done` must include:
+  - `reflectionSummary`
+  - `nextIterationPlan`
+
+Optional custom instructions:
+
+```yaml
+loop:
+  reflectEvery: 3
+  reflectInstructions: "Reassess drift risk, dependencies, and confidence before implementation."
+```
+
+Suggested migration path:
+1. Start with a conservative cadence (`reflectEvery: 5` or higher).
+2. Run a few loops and verify the checkpoint outputs are useful.
+3. Add `reflectInstructions` once your team wants a project-specific reflection template.
+4. Tighten cadence (for example, `reflectEvery: 3` then `2`) only after adoption is stable.
 
 ---
 

@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+### Release notes (reflection checkpoints documentation)
+
+- Documented reflection cadence configuration in README with `loop.reflectEvery` and `loop.reflectInstructions` examples.
+- Added loop-tool documentation for checkpoint completion metadata (`reflectionSummary`, `nextIterationPlan`).
+- Added explicit default-off and status-countdown behavior notes for checkpoint iterations.
+
+### Migration notes
+
+- Reflection checkpoints are opt-in; existing projects remain unchanged unless `loop.reflectEvery` is set.
+- Roll out gradually by starting with a larger cadence (for example `reflectEvery: 5`) before tightening.
+- Use `loop.reflectInstructions` only after baseline cadence adoption so teams can tune prompt expectations safely.
+- To disable reflection at any time, remove `loop.reflectEvery` or set it to `0`/negative.
+
 ## [0.3.0] - 2026-03-06
 
 ### Release notes (three-phase loop guidance rollout)
